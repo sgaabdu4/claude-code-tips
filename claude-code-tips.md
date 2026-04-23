@@ -2,6 +2,21 @@
 
 > **TL;DR:** I stack 5 layers to cut Claude Code token usage by 90%+: (1) **Codebase Memory MCP** — knowledge graph replaces file reads for code exploration (99% savings), (2) **context-mode** — sandboxes large outputs and returns only summaries (98% savings), (3) **RTK** — compresses CLI output in-place (60-90% savings), (4) **Headroom** — API proxy that compresses the entire prompt before it leaves your machine (47-92% savings), (5) **Caveman** — makes Claude's own responses terse (50-75% savings). Custom hooks *enforce* these tools so Claude can't bypass them. Sessions go from ~30 min to 3+ hours. One-click install script at the bottom.
 
+### Cheat sheet — every tip in 60 seconds
+
+- **`/clear` aggressively** + disable unused MCP servers per session
+- **Mermaid over prose** for architecture — fewer tokens, native parse
+- **CBM** (graph) for code discovery · **context-mode** for large outputs · **RTK** for shell · **Headroom** for API payload · **Caveman** for Claude's own output
+- **Two hooks do the heavy lifting:** `bash-ban-raw-tools` (blocks `cat`/`grep`/`find`/…) + `cbm-code-discovery-gate` (blocks `Read`/`Grep` on source until CBM is called)
+- **`/caveman:compress`** your CLAUDE.md — multiplicative win, loads every session
+- **Per-stack rule files** (`rules/flutter.md`, `react.md`, `appwrite.md`) — skill gate + numbered self-check
+- **CLI over MCP** for Tavily/Appwrite — same power, way less context
+- **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks
+- **PostToolUse reject scanners** — ESLint custom rule · node regex scanner · Dart analyzer plugin · Husky + lint-staged
+- **Settings:** `effortLevel: medium`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, autocompact at 70%
+- **Multi-model pipeline:** Opus 4.7 plan (or `/ultraplan`) → Opus implement → `/unleash` swarm → Codex (GPT-5.5) review → Codex E2E browser
+- **Measure savings** with [Codeburn](https://github.com/getagentseal/codeburn) · dictate with Fluid Voice (Parakeet)
+
 ---
 
 Early on with Claude Code, I burned through context in 20-30 minutes and hit rate limits constantly. After a few iterations I landed on a layered stack that extends sessions to 3+ hours and cuts token cost hard.

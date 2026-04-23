@@ -52,6 +52,16 @@ Each layer catches what the previous missed. Different points, no overlap.
 
 ---
 
+## Quick wins before you touch any hooks
+
+Three zero-effort moves that save tokens today:
+
+- **`/clear` aggressively.** Short focused sessions beat long ones. The longer the session, the more Claude re-reads its own trail. ([Claude Code slash commands](https://code.claude.com/docs/en/claude-code/slash-commands))
+- **Disable unused MCP servers per session.** `claude mcp list` → drop anything this task doesn't need. Unused servers burn context silently via tool descriptions. ([`claude mcp` reference](https://code.claude.com/docs/en/claude-code/cli-reference#mcp))
+- **Prefer Mermaid over prose for architecture.** A 6-line Mermaid diagram carries the same shape as 3 paragraphs at a fraction of the tokens — and Claude parses it natively. ([mermaid-js](https://github.com/mermaid-js/mermaid))
+
+---
+
 ## Layer 1: Codebase Memory MCP (99% Token Savings on Code Exploration)
 
 **Repo:** [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)
@@ -406,10 +416,11 @@ Tavily stays hot in the session for live research — docs/signatures/versions n
 
 Other things that moved the needle:
 
-- **Reject scanners on PostToolUse hooks** — every edit triggers a diff scan. Any issue goes straight back to Claude so it fixes before moving on.
+- **Reject scanners on PostToolUse hooks** — every edit triggers a structural-standards scan. Any hit goes straight back to Claude so it fixes before moving on. Concrete stack: a [custom ESLint rule](https://eslint.org/docs/latest/extend/custom-rules) for TS/JS, a node regex scanner for domain UI patterns, [`custom_lint`](https://pub.dev/packages/custom_lint) via `analysis_options.yaml` for Dart, all gated pre-commit by [Husky](https://github.com/typicode/husky) + [lint-staged](https://github.com/lint-staged/lint-staged).
 - **CLI over MCP** — ripped out Tavily + Appwrite MCP servers in favour of their CLIs (`tvly`, `appwrite`). Paired with context-mode, same power, way less context bloat.
 - **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks.
 - **Fluid Voice** for dictation (Parakeet/Nvidia under the hood) — beats stock dictation because it AI-edits as you speak.
+- **Measure what you're saving.** [Codeburn](https://github.com/getagentseal/codeburn) is a TUI dashboard that shows per-session token cost across Claude Code / Codex / Cursor. Closes the loop — you know when the stack is actually paying off.
 
 ---
 

@@ -4,21 +4,15 @@
 
 ---
 
-I've been using Claude Code for a bit now. Early on, I burned through context windows in 20-30 minutes and hit rate limits constantly. After multiple iterations, I built a layered optimisation stack that extends sessions to 3+ hours and cuts token costs dramatically.
+Early on with Claude Code, I burned through context in 20-30 minutes and hit rate limits constantly. After a few iterations I landed on a layered stack that extends sessions to 3+ hours and cuts token cost hard.
 
-Here's my complete setup: every config file, every hook, and the reasoning behind each layer. There's also a one-click install script at the end.
-
-📦 **Companion repo:** [`github.com/sgaabdu4/claude-code-tips`](https://github.com/sgaabdu4/claude-code-tips) — every file referenced below is in the repo.
-
----
+📦 **Companion repo:** [`github.com/sgaabdu4/claude-code-tips`](https://github.com/sgaabdu4/claude-code-tips) — every config, hook, and script below.
 
 ## The Problem
 
-Claude Code is powerful, but it's hungry. Every `git log`, every file read, every test run dumps raw output into your context window. A single `cargo test` with 262 passing tests? 4,823 tokens. A `git diff HEAD~1`? 21,500 tokens. Read a 500-line file? That's your context window filling up fast.
+Claude Code is hungry. `cargo test` (262 tests) = 4,823 tokens. `git diff HEAD~1` = 21,500 tokens. A 500-line file Read fills the window fast. Autocompact trips early, history vanishes, sessions die, budget burns.
 
-The result: autocompact triggers early, you lose conversation history, sessions end prematurely, and your monthly token budget evaporates.
-
-## The Solution: 4 Layers, Each Operating at a Different Point
+## The Solution: 5 Layers, Each at a Different Point in the Pipeline
 
 ```
 ┌───────────────────────────────────────────────────┐
@@ -54,7 +48,7 @@ The result: autocompact triggers early, you lose conversation history, sessions 
               Anthropic API
 ```
 
-Each layer catches what the previous one missed. No redundancy, they operate at fundamentally different points in the pipeline.
+Each layer catches what the previous missed. Different points, no overlap.
 
 ---
 
@@ -91,42 +85,12 @@ case "$TOOL" in
 esac
 ```
 
-`Grep` and `Glob` branches follow the same pattern — block source-file patterns, allow configs/docs.
+`Grep` and `Glob` branches follow the same pattern. Two companion hooks ([repo](https://github.com/sgaabdu4/claude-code-tips/tree/main/hooks)):
 
-**`~/.claude/hooks/cbm-mcp-marker`** (PostToolUse companion):
+- **`cbm-mcp-marker`** (PostToolUse) — touches `/tmp/cbm-mcp-used-$PPID` when a CBM tool fires, giving the gate its 120s unlock window.
+- **`cbm-session-reminder`** (SessionStart, matches `resume`/`clear`/`compact`) — re-injects the CBM protocol so Claude doesn't forget mid-session.
 
-```bash
-#!/bin/bash
-# Touch the marker whenever a codebase-memory-mcp tool runs.
-set -euo pipefail
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-if [[ "$TOOL" == mcp__codebase-memory-mcp__* ]]; then
-  touch /tmp/cbm-mcp-used-$PPID
-fi
-exit 0
-```
-
-**`~/.claude/hooks/cbm-session-reminder`** (SessionStart - fires on start, resume, clear, compact):
-
-```bash
-#!/bin/bash
-# Remind agent to use codebase-memory-mcp tools at session boundaries.
-cat << 'REMINDER'
-CRITICAL - Code Discovery Protocol:
-1. ALWAYS use codebase-memory-mcp tools FIRST for ANY code exploration:
-   - search_graph(name_pattern/label/qn_pattern) to find functions/classes/routes
-   - trace_path(function_name, mode=calls|data_flow|cross_service) for call chains
-   - get_code_snippet(qualified_name) to read source (NOT Read/cat)
-   - query_graph(query) for complex Cypher patterns
-   - get_architecture(aspects) for project structure
-   - search_code(pattern) for text search (graph-augmented grep)
-2. Fall back to Grep/Glob/Read ONLY for text content, config values, non-code files.
-3. If a project is not indexed yet, run index_repository FIRST.
-REMINDER
-```
-
-**The key insight:** Claude *will* fall back to `Read` and `Grep` if you only *suggest* it use CBM. You need enforcement. The gate blocks source-file reads unless CBM was called in the last 120 seconds. Non-code files (configs, docs, JSON) pass through freely. The session reminder re-injects the protocol after every `/clear` or `/compact` so Claude doesn't forget mid-session.
+**Key insight:** Claude *will* fall back to `Read`/`Grep` if you only *suggest* CBM. Suggestion isn't enforcement; blocking is.
 
 ---
 
@@ -157,45 +121,9 @@ Sessions extend from ~30 minutes to ~3 hours on the same 200K context window.
 
 ### How I integrate it
 
-context-mode hooks into every lifecycle event:
+One hook per lifecycle event (`PreToolUse`/`PostToolUse`/`PreCompact`/`SessionStart`), each calling `context-mode hook claude-code <event>`. See [full `settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json).
 
-```json
-{
-  "PreToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        { "type": "command", "command": "context-mode hook claude-code pretooluse" }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "hooks": [
-        { "type": "command", "command": "context-mode hook claude-code posttooluse" }
-      ]
-    }
-  ],
-  "PreCompact": [
-    {
-      "hooks": [
-        { "type": "command", "command": "context-mode hook claude-code precompact" }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "hooks": [
-        { "type": "command", "command": "context-mode hook claude-code sessionstart" }
-      ]
-    }
-  ]
-}
-```
-
-### Nudge test runners toward the sandbox
-
-Whole-suite test runs produce thousands of lines. A small PreToolUse hook can warn Claude to route them through `ctx_batch_execute` instead of raw Bash — same template as `bash-ban-raw-tools`, matched on your test command (`npm test`, `pytest`, `go test ./...`, etc.) without a scoping flag.
+Tip: add a sibling PreToolUse hook on your test runner (`npm test`, `pytest`, `go test ./...`) that warns Claude to use `ctx_batch_execute` — whole suites produce thousands of lines.
 
 ---
 
@@ -214,13 +142,7 @@ Whole-suite test runs produce thousands of lines. A small PreToolUse hook can wa
 | `npm test` | 25,000 | 2,500 | 90% |
 | `git add/commit/push` | 1,600 | 120 | 92% |
 
-### Why keep it alongside context-mode?
-
-Different targets:
-- **context-mode**: large outputs (>20 lines) that get fully sandboxed and indexed
-- **RTK**: small-to-medium shell output - `git status`, `npm install`, quick test results, compressed in-place before entering context
-
-They don't conflict. RTK is managed by Headroom (see Layer 4), which bundles it internally and auto-registers the hook.
+**vs context-mode:** no overlap. context-mode sandboxes large outputs (>20 lines). RTK compresses small-to-medium shell output in-place (`git status`, `npm install`, quick test results). RTK ships bundled inside Headroom (next layer).
 
 ---
 
@@ -246,25 +168,14 @@ They don't conflict. RTK is managed by Headroom (see Layer 4), which bundles it 
 | Codebase exploration | 47% |
 | Log needle-in-haystack | 87% |
 
-### Setup - One Shell Function
+### Setup — one shell function
 
-Every shell gets the same wrapper. When you type `claude`, it transparently launches through Headroom:
-
-**Fish** (`~/.config/fish/config.fish`):
-```fish
-# Headroom wraps Claude Code for API-layer token compression
-function claude
-    command headroom wrap claude $argv
-end
-```
-
-**Bash** (`~/.bashrc`) and **Zsh** (`~/.zshrc`):
 ```bash
-# Headroom wraps Claude Code for API-layer token compression
+# Bash/Zsh (Fish: wrap in `function claude ... end`)
 claude() { command headroom wrap claude "$@"; }
 ```
 
-`headroom wrap claude` starts a local proxy, sets `ANTHROPIC_BASE_URL`, and launches Claude Code. All args pass through `claude --resume`, `claude -p "query"`, etc. all work. Headroom bundles RTK internally and auto-registers the RTK hook in your session.
+Starts a local proxy, sets `ANTHROPIC_BASE_URL`, launches Claude. `--resume`, `-p "query"`, all args pass through. RTK auto-registers.
 
 ---
 
@@ -295,59 +206,29 @@ Caveman ships with automatic hooks and sub-skills:
 
 ### Installation
 
-Caveman uses the Claude Code third-party plugin marketplace system:
-
-```json
-{
-  "enabledPlugins": {
-    "caveman@caveman": true
-  },
-  "extraKnownMarketplaces": {
-    "caveman": {
-      "source": {
-        "source": "github",
-        "repo": "JuliusBrussee/caveman"
-      }
-    }
-  }
-}
-```
-
-The `extraKnownMarketplaces` field tells Claude Code to fetch the plugin from a GitHub repository rather than the official marketplace. Caveman's hooks auto-activate via `SessionStart` and `UserPromptSubmit`. It tracks mode switches and writes the active mode to a flag file so it persists through the session.
+Caveman installs via the Claude Code third-party plugin marketplace — enable in `settings.json` under `enabledPlugins` + `extraKnownMarketplaces` pointing at `JuliusBrussee/caveman`. Hooks auto-activate on `SessionStart` + `UserPromptSubmit`. Full snippet in the [companion `settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json).
 
 ---
 
-## The Enforcement Layer: bash-ban-raw-tools
+## Bonus hook: bash-ban-raw-tools
 
-The most impactful hook isn't about compression, it's about preventing Claude from wasting tokens on raw tool usage.
+Sibling to the CBM gate. Problem: when Claude runs `cat file.py` or `grep "pattern" src/` via Bash, raw output bypasses every compression hook — `Read`/`Grep` are throttled by MCP + context-mode, but Bash goes straight to context.
 
-**The problem:** When Claude runs `cat file.py` or `grep "pattern" src/` via Bash, the raw output bypasses ALL compression hooks. The built-in `Read` and `Grep` tools are subject to MCP output limits and context-mode interception. But Bash? Straight into context, uncompressed.
-
-**The fix:** Block those commands and force Claude through the optimized tools:
-
-[Full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/hooks/bash-ban-raw-tools). Core logic:
+Fix: block the raw commands and force Claude through the optimised tools. [Full file](https://github.com/sgaabdu4/claude-code-tips/blob/main/hooks/bash-ban-raw-tools). Core:
 
 ```bash
-CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
-FIRST=$(echo "$CMD" | awk '{print $1}')
-
 case "$FIRST" in
   cat|head|tail|find|grep|rg|wc) banned=1 ;;
-  rtk) exit 0 ;;                           # RTK wrappers pass through
+  rtk) exit 0 ;;                     # RTK wrappers pass through
 esac
 
-# Also catch truncation pipes like `cat file | head -20`
+# Truncation pipes still flood context before the trim
 if echo "$CMD" | grep -qE '\|\s*(tail|head)\b'; then
-  echo "BLOCKED pipe truncation — raw output floods context before trim." >&2
-  exit 2
+  echo "BLOCKED pipe truncation." >&2; exit 2
 fi
-
-[ "$banned" -eq 1 ] && { echo "BLOCKED '$FIRST'. Use Read/Grep/Glob." >&2; exit 2; }
 ```
 
 Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
-
-**The escape hatch:** `touch /tmp/bash-raw-unlock`, auto-expires after 10 minutes. Because sometimes you actually do need raw Bash.
 
 ---
 
@@ -477,41 +358,10 @@ Swap in your own stacks — the point is one skill-gated rule file per framework
 
 ---
 
-## The Custom Status Line
+## Custom Status Line
 
-A visual dashboard showing context usage, rate limits, git branch, and model, all at a glance. Color-coded progress bars: green < 50% < yellow < 75% < orange < 90% < red.
+Colour-coded dashboard — ctx/5h/7d bars, branch, model, time. Point `statusLine.command` at [`statusline-command.sh`](https://github.com/sgaabdu4/claude-code-tips/blob/main/statusline/statusline-command.sh).
 
-Wire it in settings.json:
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh",
-    "refreshInterval": 1000
-  }
-}
-```
-
-The script: [full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/statusline/statusline-command.sh). Sketch:
-
-```bash
-#!/usr/bin/env bash
-input=$(cat)
-
-# ANSI colors, plus helpers:
-#   make_bar PCT WIDTH     → "████░░░░" unicode progress bar
-#   pct_color PCT          → green <50, yellow <75, orange <90, red otherwise
-
-# Extract from Claude Code's JSON input: user, cwd, model, git branch,
-# context %, 5h/7d rate-limit %, reset timestamps.
-used_pct=$(echo "$input"  | jq -r '.context_window.used_percentage // empty')
-five_pct=$(echo "$input"  | jq -r '.rate_limits.five_hour.used_percentage // empty')
-week_pct=$(echo "$input"  | jq -r '.rate_limits.seven_day.used_percentage // empty')
-
-# Compose: "user in ~/dir on  main │ ⬡ o4.6 │ ctx ████░░░░ 48% │ 5h … │ 7d … │ HH:MM"
-```
-
-Output:
 ```
 user in ~/project on  main │ ⬡ o4.6 │ ctx ████░░░░ 48% │ 5h ██░░░░░░ 23% │ 7d █░░░░░░░ 12% │ 09:59
 ```
@@ -529,50 +379,17 @@ user in ~/project on  main │ ⬡ o4.6 │ ctx ████░░░░ 48% │
 | API tokens sent | Full | 8-53% of original |
 | Claude's response verbosity | Full prose | 25-50% of original |
 
-The compound effect is massive. CBM eliminates 99% of code exploration tokens. context-mode sandboxes 98% of large outputs. RTK compresses remaining shell output by 60-90%. Headroom squeezes the final payload by another 47-92% before it hits the API. And Caveman cuts Claude's own output by 50-75%.
+Layers compound — each catches what the previous missed.
 
----
-
-## One-Click Install
-
-[Full script: `install.sh` in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/install.sh) — ~380 lines. Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all 5 hooks, statusline, settings.json, and shell wrappers for fish/bash/zsh.
-
-Key steps (abridged):
+## Install
 
 ```bash
-#!/bin/bash
-set -euo pipefail
-
-# 1. Headroom (bundles RTK) — pip install headroom-ai[all]
-# 2. codebase-memory-mcp — download platform binary → ~/.local/bin → setup claude-code
-# 3. context-mode — claude mcp add context-mode -- npx -y context-mode
-# 4. Caveman plugin — registered via settings.json extraKnownMarketplaces
-# 5. Hooks → ~/.claude/hooks/ (bash-ban-raw-tools, cbm-*)
-# 6. Statusline → ~/.claude/statusline-command.sh
-# 7. settings.json → backs up existing, writes optimised config
-# 8. Shell wrapper → appends `claude() { command headroom wrap claude "$@"; }` to fish/bash/zsh rc
-
+git clone https://github.com/sgaabdu4/claude-code-tips.git
+cd claude-code-tips && chmod +x install.sh && ./install.sh
 ```
 
-Run it:
+Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all hooks, statusline, `settings.json`, shell wrappers (fish/bash/zsh). Backs up your existing `~/.claude/settings.json` first. Tune `model` / `effortLevel` / `advisorModel` after.
 
-```bash
-chmod +x install.sh && ./install.sh
-```
+## Closer
 
-> **Note:** The install script backs up your existing `settings.json` before overwriting. Review `model`, `effortLevel`, and `advisorModel` after install to match your plan.
-
----
-
-## The Philosophy
-
-Don't just *tell* Claude to be efficient, *enforce* it. Hooks that block wasteful patterns are worth more than 1000 words of CLAUDE.md instructions. Claude will always find the path of least resistance. Make the efficient path the only path.
-
-Each layer is independent and additive. Start with whichever solves your biggest pain point:
-- Burning tokens on code exploration? → [CBM](https://github.com/DeusData/codebase-memory-mcp)
-- Sessions too short? → [context-mode](https://github.com/mksglu/context-mode)
-- CLI output bloating context? → RTK (bundled in [Headroom](https://github.com/chopratejas/headroom))
-- Want to compress everything at the API layer? → [Headroom](https://github.com/chopratejas/headroom)
-- Claude too verbose? → [Caveman](https://github.com/JuliusBrussee/caveman)
-
-Stack them all for compound savings that change how you use Claude Code entirely.
+Don't *tell* Claude to be efficient — *enforce* it. Hooks that block wasteful patterns beat 1000 words of CLAUDE.md. Claude follows the path of least resistance. Make the efficient path the only path.

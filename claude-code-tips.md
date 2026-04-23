@@ -14,7 +14,7 @@
 - **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks
 - **PostToolUse reject scanners** — ESLint custom rule · node regex scanner · Dart analyzer plugin · Husky + lint-staged
 - **Settings:** `effortLevel: medium`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, autocompact at 70%
-- **Multi-model pipeline:** Opus 4.7 plan (or `/ultraplan`) → Opus implement → `/unleash` swarm → Codex (GPT-5.5) review → Codex E2E browser
+- **Multi-model pipeline:** Opus 4.7 plan (or `/ultraplan`) → Opus implement → `/unleash` swarm → cross-vendor review (I use Codex GPT-5.5, any intelligent model works) → same for E2E (Agent Browser dogfood for web, Dart MCP for Flutter)
 - **Measure savings** with [Codeburn](https://github.com/getagentseal/codeburn) · dictate with Fluid Voice (Parakeet)
 
 ---
@@ -422,10 +422,10 @@ With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mi
 1. **Plan** — Claude Opus 4.7, or `/ultraplan` to offload the plan to a cloud session while I keep working locally.
 2. **Implement** — Claude Opus 4.7.
 3. **Review round 1** — `/unleash` subagent swarm in parallel: lint, types, security, perf, DB-schema check.
-4. **Review round 2** — Codex (GPT-5.5). Second opinion catches what Opus missed.
-5. **E2E** — Codex + VS Code integrated browser runs the full flow, flags regressions, fixes. For web apps I also point the [Agent Browser `dogfood` skill](https://github.com/vercel-labs/agent-browser) at the URL — it clicks every button, tests forms with edge cases, and **records video when it finds a potential bug**. For Flutter, the official [Dart MCP](https://docs.flutter.dev/tools/mcp) + Flutter Driver lets the LLM drive real devices end-to-end.
+4. **Review round 2** — a different intelligent model for a cross-model second opinion. I use Codex (GPT-5.5) because the vendor switch catches blind spots a same-family reviewer misses, but another Claude or Gemini works fine.
+5. **E2E** — same principle: any strong model driving a browser. Codex + VS Code integrated browser works; so does Claude via [Agent Browser's `dogfood` skill](https://github.com/vercel-labs/agent-browser) (clicks every button, tests forms with edge cases, **records video when it finds a potential bug**). For Flutter, the official [Dart MCP](https://docs.flutter.dev/tools/mcp) + Flutter Driver lets the LLM drive real devices end-to-end.
 
-**Model floors:** any GPT-5.3+ Codex (high or xHigh) works for review; Opus 4.5, 4.6 (high), or 4.7 (medium+) works for plan/implement. Go xHigh/max on Opus when you want the strongest output.
+**Model choice, honestly:** it's interchangeable. Opus 4.5+ / 4.7 medium+ for plan and implement is my preference; any GPT-5.3+ Codex (high/xHigh) or same-class Claude works for review and E2E. Cross-vendor review catches more than same-vendor review. The only floor is "intelligent enough" — don't review Opus output with Haiku.
 
 Tavily stays hot in the session for live research — docs/signatures/versions never trust training.
 

@@ -1,0 +1,62 @@
+# Rules
+
+## Principles
+DRY/KISS/YAGNI/SSOT. No guess—read code first. Search existing before add. Min scope.
+Verify: lint+typecheck+tests. Fail→change approach. Ask before destructive.
+
+## Skill gates
+Dart/Flutter → `building-flutter-apps` FIRST.
+React/Next → `vercel-react-best-practices` FIRST.
+Appwrite → `appwrite-backend` FIRST.
+
+## Ripple check - NON-NEGOTIABLE
+Any add/change/remove: MUST grep symbol + CBM `trace_path` to find ALL usages.
+Update every call site in same change - never partial.
+
+## TDD
+Red/green/refactor. Tests first. Happy+fail+edge every change.
+
+## Tools
+CBM (code 99% save) + context-mode (shell sandbox).
+
+### Session start (MANDATORY)
+`index_status` → unindexed? `index_repository`. Indexed? `detect_changes`. Before any code work.
+
+### Code → CBM graph, never grep→read→grep
+`search_graph`/`search_code` find. `trace_path` connect. `get_architecture` structure.
+`get_code_snippet` read. `query_graph` Cypher. Fallback `Grep`/`Glob`/`Read` only if unindexed.
+
+### Shell/run/read → context-mode sandbox
+`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` large file.
+`ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store.
+No `| tail`/`| head`.
+
+### Files
+`Read` + `Edit`/`Write`. `Read` before `Edit`. No `ctx_execute` for writes.
+
+### Docs
+`tvly` CLI first (skills: `tavily-cli`, `tavily-dynamic-search`). Never trust training for
+signatures/versions/READMEs. `tvly search` topic; `tvly extract <url>` known URL;
+`ctx_fetch_and_index` fallback.
+
+### Banned Bash
+`cat`/`head`/`tail`/`grep`/`find`.
+
+### Quickref
+| Want | Tool |
+|---|---|
+| Find def | `search_graph` |
+| A→B flow | `trace_path` |
+| Arch | `get_architecture` |
+| Read snippet | `get_code_snippet` |
+| Run cmd | `ctx_execute` / `ctx_batch_execute` |
+| Read log/big file | `ctx_execute_file` |
+| Fetch URL | `ctx_fetch_and_index` → `ctx_search` |
+| Recall prior | `ctx_search` |
+
+## Subagents
+Default: delegate. Main thread coordinate only.
+Parallel: independent → one msg, multiple `Agent`.
+
+## Replies
+Min tokens. Answer first. Bullets > prose. No filler/preamble/recap/summary.

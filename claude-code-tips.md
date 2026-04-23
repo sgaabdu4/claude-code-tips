@@ -70,64 +70,26 @@ I don't just *tell* Claude to use CBM first. I *block* it from falling back to f
 
 **The gate pattern:** Two hooks work together. A PreToolUse hook blocks `Grep`/`Glob`/`Read` on source files. A PostToolUse hook touches a marker file whenever a `codebase-memory-mcp` tool runs. The gate allows `Read` for 120 seconds after a CBM call (so Claude can read-then-edit), and always allows non-code files (configs, docs, JSON).
 
-**`~/.claude/hooks/cbm-code-discovery-gate`** (PreToolUse):
+**`~/.claude/hooks/cbm-code-discovery-gate`** (PreToolUse) — [full file in repo](./hooks/cbm-code-discovery-gate). Core logic:
 
 ```bash
-#!/bin/bash
-# Blocks Grep/Glob/Read on source files so codebase-memory-mcp is used first.
-# PostToolUse sibling hook updates /tmp/cbm-mcp-used-$PPID on every MCP call —
-# Read unlocks for 120s after a fresh codebase-memory-mcp discovery call.
-# Escape hatch: touch /tmp/cbm-unlock-$PPID (one-session override).
-set -euo pipefail
-
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-UNLOCK=/tmp/cbm-unlock-$PPID
-MARKER=/tmp/cbm-mcp-used-$PPID
-[ -f "$UNLOCK" ] && exit 0
-
-find /tmp -maxdepth 1 -name 'cbm-*' -mtime +1 -delete 2>/dev/null || true
-
 case "$TOOL" in
-  Grep)
-    GLOB=$(echo "$INPUT" | jq -r '.tool_input.glob // ""')
-    TYPE=$(echo "$INPUT" | jq -r '.tool_input.type // ""')
-    PATH_Q=$(echo "$INPUT" | jq -r '.tool_input.path // ""')
-    # Allow non-code files through (configs, docs, etc.)
-    if [[ "$GLOB" =~ \.(json|yaml|yml|md|toml|lock|txt|env)$ ]] \
-      || [[ "$TYPE" =~ ^(json|yaml|md|toml|txt)$ ]] \
-      || [[ "$PATH_Q" =~ (\.claude|settings|CLAUDE\.md|/tmp/|/var/) ]]; then
-      exit 0
-    fi
-    echo "BLOCKED Grep on source code. Use codebase-memory-mcp: search_graph(query='...') or search_code(pattern='...'). Override: touch $UNLOCK." >&2
-    exit 2
-    ;;
-  Glob)
-    PATTERN=$(echo "$INPUT" | jq -r '.tool_input.pattern // ""')
-    if [[ "$PATTERN" =~ \.(dart|ts|tsx|js|jsx|py|go|rs|java|kt|swift)$ ]] \
-      || [[ "$PATTERN" =~ ^(lib|src|app)/ ]]; then
-      echo "BLOCKED Glob on source tree. Use codebase-memory-mcp: search_graph(name_pattern='.*name.*') or get_architecture(). Override: touch $UNLOCK." >&2
-      exit 2
-    fi
-    ;;
   Read)
     FP=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""')
-    # Allow configs, docs, test files, settings
+    # Allow configs, docs, tests, settings
     if [[ "$FP" =~ \.(json|yaml|yml|md|toml|lock|txt|env|sh)$ ]] \
-      || [[ "$FP" =~ (\.claude|CLAUDE\.md|settings|hooks/|/test/|_test\.) ]]; then
-      exit 0
-    fi
-    # Allow if CBM was used recently (120s window)
+      || [[ "$FP" =~ (\.claude|CLAUDE\.md|settings|hooks/|/test/|_test\.) ]]; then exit 0; fi
+    # Allow Read if CBM was used in last 120s
     if [ -f "$MARKER" ]; then
-      AGE=$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
+      AGE=$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || stat -c %Y "$MARKER") ))
       [ "$AGE" -lt 120 ] && exit 0
     fi
-    echo "BLOCKED Read on source file without a recent codebase-memory-mcp call. Run search_graph/get_code_snippet first, THEN Read the file you need to Edit. Override: touch $UNLOCK." >&2
-    exit 2
-    ;;
+    echo "BLOCKED Read on source without a recent codebase-memory-mcp call." >&2
+    exit 2 ;;
 esac
-exit 0
 ```
+
+`Grep` and `Glob` branches follow the same pattern — block source-file patterns, allow configs/docs.
 
 **`~/.claude/hooks/cbm-mcp-marker`** (PostToolUse companion):
 
@@ -361,63 +323,27 @@ The most impactful hook isn't about compression, it's about preventing Claude fr
 
 **The fix:** Block those commands and force Claude through the optimized tools:
 
+[Full file in repo](./hooks/bash-ban-raw-tools). Core logic:
+
 ```bash
-#!/bin/bash
-# PreToolUse Bash gate: block cat/head/tail/find/grep/rg/wc invocations.
-# Forces use of Read/Grep/Glob tools (which are subject to compression hooks).
-# Escape hatch: touch /tmp/bash-raw-unlock (expires after 10 min).
-set -euo pipefail
-
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-[ "$TOOL" = "Bash" ] || exit 0
-
-UNLOCK=/tmp/bash-raw-unlock
-# Unlock expires after 10 min (prevents silent permanent bypass).
-check_unlock() {
-  local f=$1
-  [ -f "$f" ] || return 1
-  local mtime
-  mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
-  local age=$(( $(date +%s) - mtime ))
-  if [ "$age" -lt 600 ]; then return 0; fi
-  rm -f "$f"; return 1
-}
-check_unlock "$UNLOCK" && exit 0
-check_unlock "/tmp/bash-raw-unlock-$PPID" && exit 0
-
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
-TRIMMED=$(echo "$CMD" | sed -E 's/^[[:space:]]*//')
-FIRST=$(echo "$TRIMMED" | awk '{print $1}')
+FIRST=$(echo "$CMD" | awk '{print $1}')
 
-banned=0
 case "$FIRST" in
   cat|head|tail|find|grep|rg|wc) banned=1 ;;
-  rtk) exit 0 ;;  # RTK wrappers pass through
+  rtk) exit 0 ;;                           # RTK wrappers pass through
 esac
 
-# Catch truncation pipes (cat file.py | head -20)
-if echo "$CMD" | grep -qE '\|\s*(tail|head)\b' && echo "$FIRST" | grep -qE '^(cat|grep|rg|find)$'; then
-  cat >&2 <<EOF
-BLOCKED: '| tail'/'| head' pipeline. Output truncation not allowed — raw output still floods context before trim.
-
-REPLACE WITH ctx_batch_execute:
-  commands: [{"label": "your label", "command": "your command"}]
-  queries:  ["what you're looking for"]
-EOF
+# Also catch truncation pipes like `cat file | head -20`
+if echo "$CMD" | grep -qE '\|\s*(tail|head)\b'; then
+  echo "BLOCKED pipe truncation — raw output floods context before trim." >&2
   exit 2
 fi
 
-[ "$banned" -eq 0 ] && exit 0
-
-case "$FIRST" in
-  cat|head|tail) echo "BLOCKED '$FIRST'. Use the Read tool." >&2 ;;
-  find) echo "BLOCKED 'find'. Use the Glob tool." >&2 ;;
-  grep|rg) echo "BLOCKED '$FIRST'. Use the Grep tool." >&2 ;;
-  wc) echo "BLOCKED 'wc'. Use Read (line count visible) or rtk wc." >&2 ;;
-esac
-exit 2
+[ "$banned" -eq 1 ] && { echo "BLOCKED '$FIRST'. Use Read/Grep/Glob." >&2; exit 2; }
 ```
+
+Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
 
 **The escape hatch:** `touch /tmp/bash-raw-unlock`, auto-expires after 10 minutes. Because sometimes you actually do need raw Bash.
 
@@ -425,7 +351,7 @@ exit 2
 
 ## The Complete settings.json
 
-Here's every setting, explained:
+[Full file in repo](./settings/settings.json). Top-level shape:
 
 ```json
 {
@@ -437,86 +363,17 @@ Here's every setting, explained:
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_PROMPT_CACHING_1H": "1"
   },
-  "permissions": {
-    "defaultMode": "auto"
-  },
+  "permissions": { "defaultMode": "auto" },
   "model": "claude-opus-4-6[1M]",
   "effortLevel": "medium",
   "advisorModel": "opus",
-  "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true,
-  "statusLine": {
-    "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh",
-    "refreshInterval": 1000
-  },
-  "enabledPlugins": {
-    "caveman@caveman": true
-  },
-  "extraKnownMarketplaces": {
-    "caveman": {
-      "source": {
-        "source": "github",
-        "repo": "JuliusBrussee/caveman"
-      }
-    }
-  },
+  "statusLine": { "type": "command", "command": "bash ~/.claude/statusline-command.sh", "refreshInterval": 1000 },
+  "enabledPlugins": { "caveman@caveman": true },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code pretooluse" },
-          { "type": "command", "command": "~/.claude/hooks/bash-ban-raw-tools" }
-        ]
-      },
-      {
-        "matcher": "Grep|Glob|Read|Search",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-code-discovery-gate" }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code posttooluse" },
-          { "type": "command", "command": "~/.claude/hooks/cbm-mcp-marker" }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code precompact" }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code sessionstart" }
-        ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "clear",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      }
-    ]
+    "PreToolUse":  [ /* Bash → context-mode + bash-ban-raw-tools; Grep|Glob|Read → cbm-code-discovery-gate */ ],
+    "PostToolUse": [ /* context-mode + cbm-mcp-marker */ ],
+    "PreCompact":  [ /* context-mode */ ],
+    "SessionStart":[ /* context-mode + cbm-session-reminder on resume|clear|compact */ ]
   }
 }
 ```
@@ -546,54 +403,23 @@ Here's every setting, explained:
 
 ## The CLAUDE.md That Makes It Work
 
-Your CLAUDE.md is instructions for *in-session* behavior. Don't document external tools (Headroom, RTK) here, they operate outside the session and Claude can't see them. Only instruct on tools Claude actively calls:
+Your CLAUDE.md is instructions for *in-session* behavior. Don't document external tools (Headroom, RTK) here — they operate outside the session and Claude can't see them. Only instruct on tools Claude actively calls.
+
+[Full file in repo](./CLAUDE.md.example). Core sections:
 
 ```markdown
-# Rules
-
 ## Principles
-DRY/KISS/YAGNI/SSOT. No guess—read code first. Search existing before add. Min scope.
-Verify: lint+typecheck+tests. Fail→change approach. Ask before destructive.
+DRY/KISS/YAGNI/SSOT. No guess — read code first. Fail→change approach. Ask before destructive.
 
 ## Skill gates
 Dart/Flutter → `building-flutter-apps` FIRST.
 React/Next → `vercel-react-best-practices` FIRST.
 Appwrite → `appwrite-backend` FIRST.
 
-## Ripple check - NON-NEGOTIABLE
-Any add/change/remove: MUST grep symbol + CBM `trace_path` to find ALL usages.
-Update every call site in same change - never partial.
+## Ripple check — NON-NEGOTIABLE
+Any add/change/remove: grep symbol + CBM `trace_path` for ALL usages. Update every call site.
 
-## TDD
-Red/green/refactor. Tests first. Happy+fail+edge every change.
-
-## Tools
-CBM (code 99% save) + context-mode (shell sandbox).
-
-### Session start (MANDATORY)
-`index_status` → unindexed? `index_repository`. Indexed? `detect_changes`. Before any code work.
-
-### Code → CBM graph, never grep→read→grep
-`search_graph`/`search_code` find. `trace_path` connect. `get_architecture` structure.
-`get_code_snippet` read. `query_graph` Cypher. Fallback `Grep`/`Glob`/`Read` only if unindexed.
-
-### Shell/run/read → context-mode sandbox
-`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` large file.
-`ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store.
-No `| tail`/`| head`.
-
-### Files
-`Read` + `Edit`/`Write`. `Read` before `Edit`. No `ctx_execute` for writes.
-
-### Docs
-`tvly` CLI first (skills: `tavily-cli`, `tavily-dynamic-search`). Never trust training for
-signatures/versions/READMEs. `tvly search` topic; `tvly extract <url>` known URL;
-`ctx_fetch_and_index` fallback.
-
-### Banned Bash
-`cat`/`head`/`tail`/`grep`/`find`.
-
-### Quickref
+## Tools — Quickref
 | Want | Tool |
 |---|---|
 | Find def | `search_graph` |
@@ -603,15 +429,12 @@ signatures/versions/READMEs. `tvly search` topic; `tvly extract <url>` known URL
 | Run cmd | `ctx_execute` / `ctx_batch_execute` |
 | Read log/big file | `ctx_execute_file` |
 | Fetch URL | `ctx_fetch_and_index` → `ctx_search` |
-| Recall prior | `ctx_search` |
 
-## Subagents
-Default: delegate. Main thread coordinate only.
-Parallel: independent → one msg, multiple `Agent`.
-
-## Replies
-Min tokens. Answer first. Bullets > prose. No filler/preamble/recap/summary.
+## Banned Bash
+`cat`/`head`/`tail`/`grep`/`find`.
 ```
+
+Full file also covers: Session start protocol (MANDATORY `index_status`), TDD, per-stack skill gates, subagent delegation policy, and reply style rules.
 
 ### Per-language rule files
 
@@ -667,92 +490,23 @@ Wire it in settings.json:
 }
 ```
 
-The script:
+The script: [full file in repo](./statusline/statusline-command.sh). Sketch:
+
 ```bash
 #!/usr/bin/env bash
 input=$(cat)
 
-# ── ANSI colors ──
-RESET='\033[0m'; BOLD='\033[1m'
-CYAN='\033[96m'; GREEN='\033[92m'; YELLOW='\033[93m'
-ORANGE='\033[38;5;208m'; RED='\033[91m'; BLUE='\033[94m'
-MAGENTA='\033[95m'; GRAY='\033[90m'; WHITE='\033[97m'
-SEP="${GRAY} │ ${RESET}"
+# ANSI colors, plus helpers:
+#   make_bar PCT WIDTH     → "████░░░░" unicode progress bar
+#   pct_color PCT          → green <50, yellow <75, orange <90, red otherwise
 
-# ── Data extraction ──
-user=$(whoami)
-dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
-dir_short=$(echo "$dir" | sed "s|$HOME|~|")
-raw_model=$(echo "$input" | jq -r '.model.display_name // ""')
-
-# Shorten: "Claude Opus 4.6" → "o4.6"
-model=""
-if [ -n "$raw_model" ]; then
-  prefix=$(echo "$raw_model" | grep -ioE 'Haiku|Sonnet|Opus' | head -1 | cut -c1 | tr '[:upper:]' '[:lower:]')
-  version=$(echo "$raw_model" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
-  [ -n "$prefix" ] && [ -n "$version" ] && model="${prefix}${version}"
-  [ -z "$model" ] && model="$raw_model"
-fi
-
-git_branch=""
-if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
-  git_branch=$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" symbolic-ref --short HEAD 2>/dev/null \
-               || git -C "$dir" rev-parse --short HEAD 2>/dev/null)
-fi
-
+# Extract from Claude Code's JSON input: user, cwd, model, git branch,
+# context %, 5h/7d rate-limit %, reset timestamps.
 used_pct=$(echo "$input"  | jq -r '.context_window.used_percentage // empty')
 five_pct=$(echo "$input"  | jq -r '.rate_limits.five_hour.used_percentage // empty')
-five_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 week_pct=$(echo "$input"  | jq -r '.rate_limits.seven_day.used_percentage // empty')
-now=$(date +%H:%M)
 
-# ── Progress bar ──
-make_bar() {
-  local pct=$1 width=${2:-10}
-  local filled=$(echo "$pct $width" | awk '{printf "%d", ($1/100)*$2+0.5}')
-  local empty=$(( width - filled ))
-  local bar=""
-  for (( i=0; i<filled; i++ )); do bar+="█"; done
-  for (( i=0; i<empty;  i++ )); do bar+="░"; done
-  printf '%s' "$bar"
-}
-
-pct_color() {
-  local pct=$1
-  if   (( $(echo "$pct < 50" | bc -l) )); then printf '%s' "$GREEN"
-  elif (( $(echo "$pct < 75" | bc -l) )); then printf '%s' "$YELLOW"
-  elif (( $(echo "$pct < 90" | bc -l) )); then printf '%s' "$ORANGE"
-  else printf '%s' "$RED"
-  fi
-}
-
-# ── Build output ──
-out="${BOLD}${CYAN}${user}${RESET}${GRAY} in ${RESET}${WHITE}${dir_short}${RESET}"
-[ -n "$git_branch" ] && out+="${GRAY} on ${RESET}${MAGENTA} ${git_branch}${RESET}"
-[ -n "$model" ] && out+="${SEP}${BLUE}⬡ ${model}${RESET}"
-
-if [ -n "$used_pct" ]; then
-  pct_int=$(printf '%.0f' "$used_pct")
-  out+="${SEP}${GRAY}ctx $(pct_color "$used_pct")$(make_bar "$pct_int" 8) ${pct_int}%${RESET}"
-fi
-
-if [ -n "$five_pct" ]; then
-  pct_int=$(printf '%.0f' "$five_pct")
-  reset_str=""
-  if [ -n "$five_resets" ]; then
-    reset_time=$(date -r "$five_resets" +%H:%M 2>/dev/null || date -d "@$five_resets" +%H:%M 2>/dev/null)
-    [ -n "$reset_time" ] && reset_str=" ${GRAY}↺${reset_time}${RESET}"
-  fi
-  out+="${SEP}${GRAY}5h $(pct_color "$five_pct")$(make_bar "$pct_int" 8) ${pct_int}%${reset_str}${RESET}"
-fi
-
-if [ -n "$week_pct" ]; then
-  pct_int=$(printf '%.0f' "$week_pct")
-  out+="${SEP}${GRAY}7d $(pct_color "$week_pct")$(make_bar "$pct_int" 8) ${pct_int}%${RESET}"
-fi
-
-out+="${SEP}${BOLD}${WHITE}${now}${RESET}"
-printf '%b' "$out"
+# Compose: "user in ~/dir on  main │ ⬡ o4.6 │ ctx ████░░░░ 48% │ 5h … │ 7d … │ HH:MM"
 ```
 
 Output:
@@ -779,404 +533,32 @@ The compound effect is massive. CBM eliminates 99% of code exploration tokens. c
 
 ## One-Click Install
 
-Save this script and run it. It installs all tools, creates all hooks, configures settings.json, and sets up the shell wrapper.
+[Full script: `install.sh` in repo](./install.sh) — ~380 lines. Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all 5 hooks, statusline, settings.json, and shell wrappers for fish/bash/zsh.
+
+Key steps (abridged):
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-echo "=== Claude Code Token Optimization Stack ==="
-echo "Installing: Headroom + RTK + CBM + context-mode + Caveman + hooks"
-echo ""
+# 1. Headroom (bundles RTK) — pip install headroom-ai[all]
+# 2. codebase-memory-mcp — download platform binary → ~/.local/bin → setup claude-code
+# 3. context-mode — claude mcp add context-mode -- npx -y context-mode
+# 4. Caveman plugin — registered via settings.json extraKnownMarketplaces
+# 5. Hooks → ~/.claude/hooks/ (bash-ban-raw-tools, cbm-*)
+# 6. Statusline → ~/.claude/statusline-command.sh
+# 7. settings.json → backs up existing, writes optimised config
+# 8. Shell wrapper → appends `claude() { command headroom wrap claude "$@"; }` to fish/bash/zsh rc
 
-# ── 1. Install Headroom (includes RTK) ──
-echo "→ Installing Headroom..."
-pip install "headroom-ai[all]" 2>/dev/null || pip3 install "headroom-ai[all]"
-
-# ── 2. Install codebase-memory-mcp ──
-echo "→ Installing codebase-memory-mcp..."
-if [[ "$(uname)" == "Darwin" ]]; then
-  if [[ "$(uname -m)" == "arm64" ]]; then
-    CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-aarch64-apple-darwin"
-  else
-    CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-x86_64-apple-darwin"
-  fi
-elif [[ "$(uname)" == "Linux" ]]; then
-  CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-x86_64-unknown-linux-gnu"
-fi
-mkdir -p "$HOME/.local/bin"
-curl -fsSL "$CBM_URL" -o "$HOME/.local/bin/codebase-memory-mcp"
-chmod +x "$HOME/.local/bin/codebase-memory-mcp"
-# Auto-configure for Claude Code
-"$HOME/.local/bin/codebase-memory-mcp" setup claude-code 2>/dev/null || true
-
-# ── 3. Install context-mode ──
-echo "→ Installing context-mode..."
-claude mcp add context-mode -- npx -y context-mode 2>/dev/null || echo "  (run 'claude mcp add context-mode -- npx -y context-mode' manually if this failed)"
-
-# ── 4. Install tvly CLI (Tavily search/extract) ──
-echo "→ Installing tvly CLI..."
-npm install -g tavily-cli 2>/dev/null || echo "  (run 'npm install -g tavily-cli' manually if this failed)"
-echo "  Export TAVILY_API_KEY in your shell rc (get key at tavily.com)."
-
-# ── 5. Create hooks directory ──
-echo "→ Creating hooks..."
-mkdir -p "$HOME/.claude/hooks"
-
-# ── Hook: bash-ban-raw-tools ──
-cat > "$HOME/.claude/hooks/bash-ban-raw-tools" << 'HOOKEOF'
-#!/bin/bash
-set -euo pipefail
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-[ "$TOOL" = "Bash" ] || exit 0
-UNLOCK=/tmp/bash-raw-unlock
-check_unlock() {
-  local f=$1; [ -f "$f" ] || return 1
-  local mtime; mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
-  local age=$(( $(date +%s) - mtime ))
-  if [ "$age" -lt 600 ]; then return 0; fi; rm -f "$f"; return 1
-}
-check_unlock "$UNLOCK" && exit 0
-check_unlock "/tmp/bash-raw-unlock-$PPID" && exit 0
-CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
-TRIMMED=$(echo "$CMD" | sed -E 's/^[[:space:]]*//')
-FIRST=$(echo "$TRIMMED" | awk '{print $1}')
-banned=0
-case "$FIRST" in cat|head|tail|find|grep|rg|wc) banned=1 ;; rtk) exit 0 ;; esac
-if echo "$CMD" | grep -qE '\|\s*(tail|head)\b' && echo "$FIRST" | grep -qE '^(cat|grep|rg|find)$'; then
-  echo "BLOCKED: pipe truncation. Use ctx_batch_execute instead." >&2; exit 2
-fi
-[ "$banned" -eq 0 ] && exit 0
-case "$FIRST" in
-  cat|head|tail) echo "BLOCKED '$FIRST'. Use Read tool." >&2 ;;
-  find) echo "BLOCKED 'find'. Use Glob tool." >&2 ;;
-  grep|rg) echo "BLOCKED '$FIRST'. Use Grep tool." >&2 ;;
-  wc) echo "BLOCKED 'wc'. Use Read." >&2 ;;
-esac
-exit 2
-HOOKEOF
-
-# ── Hook: cbm-code-discovery-gate ──
-cat > "$HOME/.claude/hooks/cbm-code-discovery-gate" << 'HOOKEOF'
-#!/bin/bash
-set -euo pipefail
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-UNLOCK=/tmp/cbm-unlock-$PPID
-MARKER=/tmp/cbm-mcp-used-$PPID
-[ -f "$UNLOCK" ] && exit 0
-find /tmp -maxdepth 1 -name 'cbm-*' -mtime +1 -delete 2>/dev/null || true
-case "$TOOL" in
-  Grep)
-    GLOB=$(echo "$INPUT" | jq -r '.tool_input.glob // ""')
-    TYPE=$(echo "$INPUT" | jq -r '.tool_input.type // ""')
-    PATH_Q=$(echo "$INPUT" | jq -r '.tool_input.path // ""')
-    if [[ "$GLOB" =~ \.(json|yaml|yml|md|toml|lock|txt|env)$ ]] \
-      || [[ "$TYPE" =~ ^(json|yaml|md|toml|txt)$ ]] \
-      || [[ "$PATH_Q" =~ (\.claude|settings|CLAUDE\.md|/tmp/|/var/) ]]; then exit 0; fi
-    echo "BLOCKED Grep on source code. Use codebase-memory-mcp first. Override: touch $UNLOCK." >&2; exit 2 ;;
-  Glob)
-    PATTERN=$(echo "$INPUT" | jq -r '.tool_input.pattern // ""')
-    if [[ "$PATTERN" =~ \.(dart|ts|tsx|js|jsx|py|go|rs|java|kt|swift)$ ]] \
-      || [[ "$PATTERN" =~ ^(lib|src|app)/ ]]; then
-      echo "BLOCKED Glob on source tree. Use codebase-memory-mcp first. Override: touch $UNLOCK." >&2; exit 2
-    fi ;;
-  Read)
-    FP=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""')
-    if [[ "$FP" =~ \.(json|yaml|yml|md|toml|lock|txt|env|sh)$ ]] \
-      || [[ "$FP" =~ (\.claude|CLAUDE\.md|settings|hooks/|/test/|_test\.) ]]; then exit 0; fi
-    if [ -f "$MARKER" ]; then
-      AGE=$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
-      [ "$AGE" -lt 120 ] && exit 0
-    fi
-    echo "BLOCKED Read on source file. Use codebase-memory-mcp first. Override: touch $UNLOCK." >&2; exit 2 ;;
-esac
-exit 0
-HOOKEOF
-
-# ── Hook: cbm-mcp-marker ──
-cat > "$HOME/.claude/hooks/cbm-mcp-marker" << 'HOOKEOF'
-#!/bin/bash
-set -euo pipefail
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-if [[ "$TOOL" == mcp__codebase-memory-mcp__* ]]; then
-  touch /tmp/cbm-mcp-used-$PPID
-fi
-exit 0
-HOOKEOF
-
-# ── Hook: cbm-session-reminder ──
-cat > "$HOME/.claude/hooks/cbm-session-reminder" << 'HOOKEOF'
-#!/bin/bash
-cat << 'REMINDER'
-CRITICAL - Code Discovery Protocol:
-1. ALWAYS use codebase-memory-mcp tools FIRST for ANY code exploration:
-   - search_graph to find functions/classes/routes
-   - trace_path for call chains
-   - get_code_snippet to read source
-   - query_graph for complex patterns
-   - get_architecture for project structure
-2. Fall back to Grep/Glob/Read ONLY for non-code files.
-3. If a project is not indexed yet, run index_repository FIRST.
-REMINDER
-HOOKEOF
-
-# Make all hooks executable
-chmod +x "$HOME/.claude/hooks/"*
-
-# ── 6. Create statusline script ──
-echo "→ Creating statusline..."
-cat > "$HOME/.claude/statusline-command.sh" << 'STATUSEOF'
-#!/usr/bin/env bash
-input=$(cat)
-RESET='\033[0m'; BOLD='\033[1m'
-CYAN='\033[96m'; GREEN='\033[92m'; YELLOW='\033[93m'
-ORANGE='\033[38;5;208m'; RED='\033[91m'; BLUE='\033[94m'
-MAGENTA='\033[95m'; GRAY='\033[90m'; WHITE='\033[97m'
-SEP="${GRAY} │ ${RESET}"
-user=$(whoami)
-dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
-dir_short=$(echo "$dir" | sed "s|$HOME|~|")
-raw_model=$(echo "$input" | jq -r '.model.display_name // ""')
-model=""
-if [ -n "$raw_model" ]; then
-  prefix=$(echo "$raw_model" | grep -ioE 'Haiku|Sonnet|Opus' | head -1 | cut -c1 | tr '[:upper:]' '[:lower:]')
-  version=$(echo "$raw_model" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
-  [ -n "$prefix" ] && [ -n "$version" ] && model="${prefix}${version}"
-  [ -z "$model" ] && model="$raw_model"
-fi
-git_branch=""
-if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
-  git_branch=$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" symbolic-ref --short HEAD 2>/dev/null \
-               || git -C "$dir" rev-parse --short HEAD 2>/dev/null)
-fi
-used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-five_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-now=$(date +%H:%M)
-make_bar() {
-  local pct=$1 width=${2:-10} filled=$(echo "$pct $width" | awk '{printf "%d", ($1/100)*$2+0.5}')
-  local empty=$(( width - filled )) bar=""
-  for (( i=0; i<filled; i++ )); do bar+="█"; done
-  for (( i=0; i<empty; i++ )); do bar+="░"; done
-  printf '%s' "$bar"
-}
-pct_color() {
-  if (( $(echo "$1 < 50" | bc -l) )); then printf '%s' "$GREEN"
-  elif (( $(echo "$1 < 75" | bc -l) )); then printf '%s' "$YELLOW"
-  elif (( $(echo "$1 < 90" | bc -l) )); then printf '%s' "$ORANGE"
-  else printf '%s' "$RED"; fi
-}
-out="${BOLD}${CYAN}${user}${RESET}${GRAY} in ${RESET}${WHITE}${dir_short}${RESET}"
-[ -n "$git_branch" ] && out+="${GRAY} on ${RESET}${MAGENTA} ${git_branch}${RESET}"
-[ -n "$model" ] && out+="${SEP}${BLUE}⬡ ${model}${RESET}"
-if [ -n "$used_pct" ]; then
-  pct_int=$(printf '%.0f' "$used_pct")
-  out+="${SEP}${GRAY}ctx $(pct_color "$used_pct")$(make_bar "$pct_int" 8) ${pct_int}%${RESET}"
-fi
-if [ -n "$five_pct" ]; then
-  pct_int=$(printf '%.0f' "$five_pct")
-  reset_str=""
-  if [ -n "$five_resets" ]; then
-    reset_time=$(date -r "$five_resets" +%H:%M 2>/dev/null || date -d "@$five_resets" +%H:%M 2>/dev/null)
-    [ -n "$reset_time" ] && reset_str=" ${GRAY}↺${reset_time}${RESET}"
-  fi
-  out+="${SEP}${GRAY}5h $(pct_color "$five_pct")$(make_bar "$pct_int" 8) ${pct_int}%${reset_str}${RESET}"
-fi
-if [ -n "$week_pct" ]; then
-  pct_int=$(printf '%.0f' "$week_pct")
-  out+="${SEP}${GRAY}7d $(pct_color "$week_pct")$(make_bar "$pct_int" 8) ${pct_int}%${RESET}"
-fi
-out+="${SEP}${BOLD}${WHITE}${now}${RESET}"
-printf '%b' "$out"
-STATUSEOF
-
-# ── 7. Write settings.json ──
-echo "→ Configuring settings.json..."
-# Back up existing settings
-[ -f "$HOME/.claude/settings.json" ] && cp "$HOME/.claude/settings.json" "$HOME/.claude/settings.json.bak.$(date +%s)"
-
-cat > "$HOME/.claude/settings.json" << 'SETTINGSEOF'
-{
-  "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
-    "BASH_MAX_OUTPUT_LENGTH": "10000",
-    "MAX_MCP_OUTPUT_TOKENS": "10000",
-    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "ENABLE_PROMPT_CACHING_1H": "1"
-  },
-  "permissions": {
-    "defaultMode": "auto"
-  },
-  "effortLevel": "medium",
-  "advisorModel": "opus",
-  "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true,
-  "statusLine": {
-    "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh",
-    "refreshInterval": 1000
-  },
-  "enabledPlugins": {
-    "caveman@caveman": true
-  },
-  "extraKnownMarketplaces": {
-    "caveman": {
-      "source": {
-        "source": "github",
-        "repo": "JuliusBrussee/caveman"
-      }
-    }
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code pretooluse" },
-          { "type": "command", "command": "~/.claude/hooks/bash-ban-raw-tools" }
-        ]
-      },
-      {
-        "matcher": "Grep|Glob|Read|Search",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-code-discovery-gate" }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code posttooluse" },
-          { "type": "command", "command": "~/.claude/hooks/cbm-mcp-marker" }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code precompact" }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code sessionstart" }
-        ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "clear",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      }
-    ]
-  }
-}
-SETTINGSEOF
-
-# ── 8. Add shell wrapper ──
-echo "→ Adding shell wrapper for headroom..."
-
-# Fish
-if [ -f "$HOME/.config/fish/config.fish" ]; then
-  if ! grep -q 'headroom wrap claude' "$HOME/.config/fish/config.fish" 2>/dev/null; then
-    cat >> "$HOME/.config/fish/config.fish" << 'FISHEOF'
-
-# Headroom wraps Claude Code for API-layer token compression
-function claude
-    command headroom wrap claude $argv
-end
-FISHEOF
-    echo "  ✓ Fish config updated"
-  else
-    echo "  ✓ Fish config already has headroom wrapper"
-  fi
-fi
-
-# Zsh
-if [ -f "$HOME/.zshrc" ]; then
-  if ! grep -q 'headroom wrap claude' "$HOME/.zshrc" 2>/dev/null; then
-    cat >> "$HOME/.zshrc" << 'ZSHEOF'
-
-# Headroom wraps Claude Code for API-layer token compression
-claude() { command headroom wrap claude "$@"; }
-ZSHEOF
-    echo "  ✓ Zsh config updated"
-  else
-    echo "  ✓ Zsh config already has headroom wrapper"
-  fi
-fi
-
-# Bash
-if [ -f "$HOME/.bashrc" ]; then
-  if ! grep -q 'headroom wrap claude' "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" << 'BASHEOF'
-
-# Headroom wraps Claude Code for API-layer token compression
-claude() { command headroom wrap claude "$@"; }
-BASHEOF
-    echo "  ✓ Bash config updated"
-  else
-    echo "  ✓ Bash config already has headroom wrapper"
-  fi
-fi
-
-echo ""
-echo "=== Installation Complete ==="
-echo ""
-echo "What was installed:"
-echo "  ✓ Headroom (API-layer compression, bundles RTK)"
-echo "  ✓ codebase-memory-mcp (knowledge graph for code)"
-echo "  ✓ context-mode (output virtualization)"
-echo "  ✓ Caveman plugin (compressed Claude output)"
-echo "  ✓ 5 enforcement hooks"
-echo "  ✓ Custom statusline"
-echo "  ✓ Optimized settings.json"
-echo "  ✓ Shell wrappers (fish/zsh/bash)"
-echo ""
-echo "Next steps:"
-echo "  1. Restart your shell: exec \$SHELL"
-echo "  2. Run 'claude' — it now auto-wraps through Headroom"
-echo "  3. In a project, CBM will prompt to index on first use"
-echo "  4. Run '/caveman' to activate compressed output mode"
-echo ""
-echo "Repos:"
-echo "  Headroom:  https://github.com/chopratejas/headroom"
-echo "  CBM:       https://github.com/DeusData/codebase-memory-mcp"
-echo "  ctx-mode:  https://github.com/mksglu/context-mode"
-echo "  Caveman:   https://github.com/JuliusBrussee/caveman"
-echo "  RTK:       https://github.com/rtk-ai/rtk (bundled in Headroom)"
 ```
 
-Save as `install-claude-optimizer.sh` and run:
+Run it:
+
 ```bash
-curl -fsSL https://gist.githubusercontent.com/YOUR_USERNAME/YOUR_GIST_ID/raw/install-claude-optimizer.sh | bash
+chmod +x install.sh && ./install.sh
 ```
 
-Or locally:
-```bash
-chmod +x install-claude-optimizer.sh && ./install-claude-optimizer.sh
-```
-
-> **Note:** The install script backs up your existing `settings.json` before overwriting. Review and adjust settings like `model`, `effortLevel`, and `advisorModel` to match your plan.
+> **Note:** The install script backs up your existing `settings.json` before overwriting. Review `model`, `effortLevel`, and `advisorModel` after install to match your plan.
 
 ---
 

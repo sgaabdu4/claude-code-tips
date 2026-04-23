@@ -390,6 +390,27 @@ cd claude-code-tips && chmod +x install.sh && ./install.sh
 
 Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all hooks, statusline, `settings.json`, shell wrappers (fish/bash/zsh). Backs up your existing `~/.claude/settings.json` first. Tune `model` / `effortLevel` / `advisorModel` after.
 
+## Bonus: The workflow this unlocks
+
+With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mine:
+
+1. **Plan** — Opus. Spec out the approach.
+2. **Implement** — Opus. Ship the code.
+3. **Review round 1** — `/unleash` subagent swarm in parallel: lint, types, security, perf, DB-schema check.
+4. **Review round 2** — Codex (GPT-5.1). Second opinion catches what Opus missed.
+5. **E2E** — Codex + VS Code integrated browser. Runs the full flow, flags regressions, fixes.
+
+Tavily stays hot in the session for live research — docs/signatures/versions never trust training.
+
+Other things that moved the needle:
+
+- **Reject scanners on PostToolUse hooks** — every edit triggers a diff scan. Any issue goes straight back to Claude so it fixes before moving on.
+- **CLI over MCP** — ripped out Tavily + Appwrite MCP servers in favour of their CLIs (`tvly`, `appwrite`). Paired with context-mode, same power, way less context bloat.
+- **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks.
+- **Fluid Voice** for dictation (Parakeet/Nvidia under the hood) — beats stock dictation because it AI-edits as you speak.
+
+---
+
 ## Closer
 
 Don't *tell* Claude to be efficient — *enforce* it. Hooks that block wasteful patterns beat 1000 words of CLAUDE.md. Claude follows the path of least resistance. Make the efficient path the only path.

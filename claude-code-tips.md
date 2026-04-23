@@ -8,6 +8,8 @@ I've been using Claude Code for a bit now. Early on, I burned through context wi
 
 Here's my complete setup: every config file, every hook, and the reasoning behind each layer. There's also a one-click install script at the end.
 
+📦 **Companion repo:** [`github.com/sgaabdu4/claude-code-tips`](https://github.com/sgaabdu4/claude-code-tips) — every file referenced below is in the repo.
+
 ---
 
 ## The Problem
@@ -70,7 +72,7 @@ I don't just *tell* Claude to use CBM first. I *block* it from falling back to f
 
 **The gate pattern:** Two hooks work together. A PreToolUse hook blocks `Grep`/`Glob`/`Read` on source files. A PostToolUse hook touches a marker file whenever a `codebase-memory-mcp` tool runs. The gate allows `Read` for 120 seconds after a CBM call (so Claude can read-then-edit), and always allows non-code files (configs, docs, JSON).
 
-**`~/.claude/hooks/cbm-code-discovery-gate`** (PreToolUse) — [full file in repo](./hooks/cbm-code-discovery-gate). Core logic:
+**`~/.claude/hooks/cbm-code-discovery-gate`** (PreToolUse) — [full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/hooks/cbm-code-discovery-gate). Core logic:
 
 ```bash
 case "$TOOL" in
@@ -323,7 +325,7 @@ The most impactful hook isn't about compression, it's about preventing Claude fr
 
 **The fix:** Block those commands and force Claude through the optimized tools:
 
-[Full file in repo](./hooks/bash-ban-raw-tools). Core logic:
+[Full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/hooks/bash-ban-raw-tools). Core logic:
 
 ```bash
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
@@ -351,7 +353,7 @@ Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
 
 ## The Complete settings.json
 
-[Full file in repo](./settings/settings.json). Top-level shape:
+[Full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json). Top-level shape:
 
 ```json
 {
@@ -405,7 +407,7 @@ Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
 
 Your CLAUDE.md is instructions for *in-session* behavior. Don't document external tools (Headroom, RTK) here — they operate outside the session and Claude can't see them. Only instruct on tools Claude actively calls.
 
-[Full file in repo](./CLAUDE.md.example). Core sections:
+[Full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/CLAUDE.md.example). Core sections:
 
 ```markdown
 ## Principles
@@ -490,7 +492,7 @@ Wire it in settings.json:
 }
 ```
 
-The script: [full file in repo](./statusline/statusline-command.sh). Sketch:
+The script: [full file in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/statusline/statusline-command.sh). Sketch:
 
 ```bash
 #!/usr/bin/env bash
@@ -533,7 +535,7 @@ The compound effect is massive. CBM eliminates 99% of code exploration tokens. c
 
 ## One-Click Install
 
-[Full script: `install.sh` in repo](./install.sh) — ~380 lines. Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all 5 hooks, statusline, settings.json, and shell wrappers for fish/bash/zsh.
+[Full script: `install.sh` in repo](https://github.com/sgaabdu4/claude-code-tips/blob/main/install.sh) — ~380 lines. Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plugin, all 5 hooks, statusline, settings.json, and shell wrappers for fish/bash/zsh.
 
 Key steps (abridged):
 

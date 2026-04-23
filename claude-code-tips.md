@@ -394,11 +394,13 @@ Installs Headroom (bundles RTK), codebase-memory-mcp, context-mode, Caveman plug
 
 With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mine:
 
-1. **Plan** — Opus. Spec out the approach.
-2. **Implement** — Opus. Ship the code.
+1. **Plan** — Claude Opus 4.7, or `/ultraplan` to offload the plan to a cloud session while I keep working locally.
+2. **Implement** — Claude Opus 4.7.
 3. **Review round 1** — `/unleash` subagent swarm in parallel: lint, types, security, perf, DB-schema check.
-4. **Review round 2** — Codex (GPT-5.1). Second opinion catches what Opus missed.
+4. **Review round 2** — Codex (GPT-5.5). Second opinion catches what Opus missed.
 5. **E2E** — Codex + VS Code integrated browser. Runs the full flow, flags regressions, fixes.
+
+**Model floors:** any GPT-5.3+ Codex (high or xHigh) works for review; Opus 4.5, 4.6 (high), or 4.7 (medium+) works for plan/implement. Go xHigh/max on Opus when you want the strongest output.
 
 Tavily stays hot in the session for live research — docs/signatures/versions never trust training.
 

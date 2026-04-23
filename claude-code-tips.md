@@ -125,9 +125,9 @@ esac
 
 **What it does:** A context virtualization layer. Instead of letting tool outputs flow raw into the conversation context, it intercepts them, runs them in a sandboxed subprocess, indexes the full output into a local BM25 knowledge base, and returns only a compact summary. The full output remains searchable on demand.
 
-**Real numbers:** 99% on a Playwright DOM snapshot (56.2 KB → 299 B), 98% on 20 GitHub Issues, 99% on a 153-commit git log, 98% across a full session (315 KB → 5.4 KB). Full benchmark breakdown across Layers 2-4 in the embedded Gist below.
+**Real numbers:**
 
-https://gist.github.com/sgaabdu4/a73d38842fdce2399cf76fc672e8d3b3
+https://gist.github.com/sgaabdu4/031abf87a6043bedbfb5c408d008482c
 
 Sessions extend from ~30 minutes to ~3 hours on the same 200K context window.
 
@@ -153,7 +153,9 @@ Tip: add a sibling PreToolUse hook on your test runner (`npm test`, `pytest`, `g
 
 **What it does:** A Rust binary that intercepts CLI command output and compresses it before it enters the context window. Strips boilerplate, groups similar items, truncates long output, deduplicates repeated entries. Single binary, <10ms overhead, no network calls.
 
-**Real numbers:** 99% on `cargo test` (4,823 → 11 tokens), 94% on `git diff HEAD~1`, 90% on `npm test`, 92% on a `git add/commit/push` sequence. Full table in the [Gist above](https://gist.github.com/sgaabdu4/a73d38842fdce2399cf76fc672e8d3b3).
+**Real numbers:**
+
+https://gist.github.com/sgaabdu4/b38789426177346f00d546eb27f87c9b
 
 **vs context-mode:** no overlap. context-mode sandboxes large outputs (>20 lines). RTK compresses small-to-medium shell output in-place (`git status`, `npm install`, quick test results). RTK ships bundled inside Headroom (next layer).
 
@@ -171,7 +173,9 @@ Tip: add a sibling PreToolUse hook on your test runner (`npm test`, `pytest`, `g
 
 **The unique value:** Layers 1-3 reduce what *enters* the context window. Headroom compresses what *leaves* it, including conversation history, system prompts, and CLAUDE.md instructions that no other tool touches.
 
-**Reported savings:** 92% on code-search (100 results), 92% on SRE incident debugging, 87% on log needle-in-haystack, 73% on GitHub issue triage, 47% on general codebase exploration. Full table in the [Gist above](https://gist.github.com/sgaabdu4/a73d38842fdce2399cf76fc672e8d3b3).
+**Reported savings:**
+
+https://gist.github.com/sgaabdu4/67aa0360409be437dbd6bfff85d7cd76
 
 ### Setup. one shell function
 

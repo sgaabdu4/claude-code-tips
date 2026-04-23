@@ -423,7 +423,7 @@ With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mi
 2. **Implement** — Claude Opus 4.7.
 3. **Review round 1** — `/unleash` subagent swarm in parallel: lint, types, security, perf, DB-schema check.
 4. **Review round 2** — Codex (GPT-5.5). Second opinion catches what Opus missed.
-5. **E2E** — Codex + VS Code integrated browser. Runs the full flow, flags regressions, fixes.
+5. **E2E** — Codex + VS Code integrated browser runs the full flow, flags regressions, fixes. For web apps I also point the [Agent Browser `dogfood` skill](https://github.com/vercel-labs/agent-browser) at the URL — it clicks every button, tests forms with edge cases, and **records video when it finds a potential bug**. For Flutter, the official [Dart MCP](https://docs.flutter.dev/tools/mcp) + Flutter Driver lets the LLM drive real devices end-to-end.
 
 **Model floors:** any GPT-5.3+ Codex (high or xHigh) works for review; Opus 4.5, 4.6 (high), or 4.7 (medium+) works for plan/implement. Go xHigh/max on Opus when you want the strongest output.
 

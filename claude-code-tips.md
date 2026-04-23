@@ -266,11 +266,17 @@ Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
 }
 ```
 
-### What each env var + setting does
+### What each env var does
 
-Key highlights: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` fires compaction aggressively (the 4 compression layers mean you rarely hit it); `ENABLE_PROMPT_CACHING_1H=1` extends prompt cache TTL from 5 minutes to 1 hour (big cost saver on long sessions); `effortLevel: medium` cuts output tokens per response; `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions on tough decisions. Full table with every variable and setting:
+Headliners: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` fires compaction aggressively (the 4 compression layers mean you rarely hit it) and `ENABLE_PROMPT_CACHING_1H=1` extends prompt cache TTL from 5 minutes to 1 hour (big cost saver on long sessions). Full table:
 
-https://gist.github.com/sgaabdu4/f4930a7569b5681ec76e610fd798324d
+https://gist.github.com/sgaabdu4/f352f61e23f41f331c7d5a5985bc9604
+
+### Other settings explained
+
+`effortLevel: medium` cuts output tokens per response (bump to `high` for architecture decisions). `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions. Full table:
+
+https://gist.github.com/sgaabdu4/9ef5dd71813217c695ee5f5944c49680
 
 ---
 

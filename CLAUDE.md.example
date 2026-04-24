@@ -1,23 +1,7 @@
 # Rules
 
 ## Principles
-DRY/KISS/YAGNI/SSOT. Read code first, no guess. Search before add. Min scope. Verify lint+typecheck+tests. Fail→change approach. Ask before destructive. Never commit secrets. `AskUserQuestion` clarify.
-
-## Implementation Flow — MANDATORY, IN ORDER
-Every impl task. Skip step → STOP, restart from skipped.
-
-1. **Index** — `index_status`. Unindexed? `index_repository`. Indexed? `detect_changes`.
-2. **Skill gate** — invoke every matching skill FIRST (stack rules `## Skill gates`; auto-match too). Multi-skill → invoke each.
-3. **Clarify** — ambiguous? `AskUserQuestion`. No guess.
-4. **Explore** — CBM: `get_architecture` → `search_graph` → `get_code_snippet`. Never grep→read→grep.
-5. **Plan** — non-trivial? `EnterPlanMode`. State approach + files + trade-offs.
-6. **Delegate?** — match MANDATORY criteria (`## Subagents`)? Spawn subagent self-contained prompt. Subagent run §1–10 self. Parallel cap 3. Inline only if 1-file edit / single grep / known path.
-7. **Ripple** — changed symbol → `trace_path` inbound ALL call sites. Update every.
-8. **TDD** — red → min code → green → refactor. Happy+fail+edge.
-9. **Verify** — lint + typecheck + tests PASS. Fail → fix root cause, no skip.
-10. **Advisor** — big task → `advisor()` before done.
-
-Subagents inherit nothing auto. Your `.md` must declare `skills:` frontmatter + reference flow.
+DRY/KISS/YAGNI/SSOT. Read code first, no guess. Search before add. Min scope. Verify lint+typecheck+tests. Fail→change approach. Ask before destructive. Never commit secrets. `AskUserQuestion` to clarify.
 
 ## Skill gates
 Dart/Flutter → `building-flutter-apps` FIRST. React/Next → `vercel-react-best-practices` FIRST. Appwrite → `appwrite-backend` FIRST. Checklists: `.claude/rules/`.
@@ -26,7 +10,7 @@ Dart/Flutter → `building-flutter-apps` FIRST. React/Next → `vercel-react-bes
 Edit one site, miss others → break. Any add/change/remove: grep symbol + CBM `trace_path` ALL usages. Update every call site. Linter miss loose types/`dynamic`/`any`/optional. Never trust "only used here".
 
 ## TDD
-Red/green/refactor. Tests first. Happy+fail+edge. Edges: empty/null/boundary/concurrency/tz/unicode/overflow/permission/network/partial. Red → min code → green → refactor.
+Red/green/refactor. Tests first. Happy+fail+edge. Edges: empty/null/boundary/concurrency/tz/unicode/overflow/permission/network/partial.
 
 ## Tools
 CBM + context-mode.
@@ -38,7 +22,7 @@ CBM + context-mode.
 `search_graph`/`search_code` find. `trace_path` connect. `get_architecture` structure. `get_code_snippet` read. `query_graph` Cypher. Fallback `Grep`/`Glob`/`Read` only if unindexed.
 
 ### Shell/run/read → context-mode sandbox
-`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` big file. `ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store later. No `|tail`/`|head`.
+`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` big file. `ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store. No `|tail`/`|head`.
 
 ### Files
 `Read`+`Edit`/`Write`. Read before Edit. No `ctx_execute` for writes.
@@ -66,11 +50,11 @@ Delegate default. Main = coordinator.
 - **Type**: `general-purpose` (edits), `Plan` (read-only arch), `Explore` (read-only nav).
 - **Prompt**: self-contained, <500 tok. Goal + context + constraint + return format.
 - **Return**: "report <200 words".
-- **Model**: default sonnet via env. Override `model: claude-opus-4-7` for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
-- Big task → advisor after.
+- **Model**: default sonnet via `CLAUDE_CODE_SUBAGENT_MODEL` env. Override `model: claude-opus-4-7` in agent frontmatter for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
+- Big task → advisor review after.
 
 ## Handoff
-PreCompact hook auto-write `docs/handoff-context.md` via `claude -p --bare`. SessionStart hook (matcher compact|resume) auto-inline. Manual `/handoff` anytime. Delete file after resume.
+PreCompact hook auto-writes `docs/handoff-context.md` via `claude -p --bare`. SessionStart hook (matcher compact|resume) auto-inlines file. Manual `/handoff` anytime. Delete file after resume.
 
 ## Writing
 Active voice. Concrete. No puffery (robust/seamless/leverage/delve/pivotal/groundbreaking/multifaceted/foster/tapestry). Mermaid when diagram > prose.
@@ -79,9 +63,7 @@ Active voice. Concrete. No puffery (robust/seamless/leverage/delve/pivotal/groun
 Min tokens. Answer first. Bullets > prose. No filler/preamble/recap/summary. No status narration between tools.
 
 ## Context hygiene
-Post-`/compact`: re-discover tools via `ToolSearch`. Long task: checkpoint to auto-memory.
+Long task: checkpoint to auto-memory.
 
 ## Per-project
 Project `CLAUDE.md` overrides. Read `CLAUDE.md`/`architecture.md`/`/docs` before cross-cutting.
-
-@RTK.md

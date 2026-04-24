@@ -335,10 +335,27 @@ Your CLAUDE.md is instructions for *in-session* behavior. Don't document externa
 ## Principles
 DRY/KISS/YAGNI/SSOT. No guess. read code first. Fail→change approach. Ask before destructive.
 
+## Implementation Flow — MANDATORY, IN ORDER
+Skip step → STOP, restart from skipped.
+
+1. **Index** — `index_status`. Unindexed? `index_repository`. Indexed? `detect_changes`.
+2. **Skill gate** — invoke every matching skill FIRST.
+3. **Clarify** — ambiguous? `AskUserQuestion`. No guess.
+4. **Explore** — CBM: `get_architecture` → `search_graph` → `get_code_snippet`.
+5. **Plan** — non-trivial? `EnterPlanMode`.
+6. **Delegate?** — match MANDATORY criteria? Spawn subagent. Inline only if 1-file edit / single grep.
+7. **Ripple** — changed symbol → `trace_path` ALL call sites.
+8. **TDD** — red → min code → green → refactor.
+9. **Verify** — lint + typecheck + tests PASS.
+10. **Advisor** — big task → `advisor()` before done.
+
+Subagents inherit nothing auto. Agent `.md` must declare `skills:` frontmatter.
+
 ## Skill gates
 Dart/Flutter → `building-flutter-apps` FIRST.
 React/Next → `vercel-react-best-practices` FIRST.
 Appwrite → `appwrite-backend` FIRST.
+Checklists: `.claude/rules/`.
 
 ## Ripple check. NON-NEGOTIABLE
 Any add/change/remove: grep symbol + CBM `trace_path` for ALL usages. Update every call site.
@@ -359,15 +376,20 @@ Any add/change/remove: grep symbol + CBM `trace_path` for ALL usages. Update eve
 
 ## Subagents
 Delegate default. Main = coordinator.
-- MANDATORY delegate: online research, refactor >2 files, audit, multi-file impact, big log triage.
+- MANDATORY delegate: online research, refactor >2 files, summarize >1 file, audit, explore unknown repo, multi-file impact, big log triage.
+- Skip: 1-file read, 1-grep, single-known-path edit. Inline.
 - Parallel cap: 3 concurrent. Serial if dependent.
+- Type: `general-purpose` (edits), `Plan` (read-only arch), `Explore` (read-only nav).
+- Prompt: self-contained, <500 tok. Goal + context + constraint + return format.
+- Return: "report <200 words".
 - Model: default sonnet via env. Override `model: claude-opus-4-7` in agent frontmatter for refactor/audit/edge-case-hunter/staff-engineer.
+- Big task → advisor after.
 
 ## Handoff
 PreCompact hook auto-writes `docs/handoff-context.md` via `claude -p --bare`. SessionStart hook (matcher compact|resume) auto-inlines file. Manual `/handoff` anytime.
 ```
 
-Full file also covers: Session start protocol (MANDATORY `index_status`), TDD, per-stack skill gates, subagent delegation + model strategy, auto-handoff system, and reply style rules.
+Full file also covers: per-stack skill gates, ripple checks, TDD edge list, subagent model strategy, auto-handoff system, and reply style rules.
 
 ### Per-language rule files
 
@@ -379,12 +401,13 @@ I also use `.claude/rules/` for stack-specific enforcement. Loaded via `@` impor
 Invoke `building-flutter-apps` skill FIRST. No skip.
 Self-check:
 1. `if (!ref.mounted) return;` after every `await` in notifier
-2. `if (!context.mounted) return;` after every `await` in widget/State
+2. `if (!context.mounted) return;` after every `await` in widget/State. Never bare `mounted`. Lint fires → extract sync helper on State w/ `this.context` (no `BuildContext` arg)
 3. No `_buildXxx()`. extract widget classes
 4. No hardcoded strings. `*Strings` constants
 5. `ref.watch` in build, `ref.read` in callbacks only
 6. Riverpod 3.x codegen: `FooNotifier` → `fooProvider`
 7. No `shrinkWrap: true` on ListView/GridView
+Run skill Pre-Flight before return.
 ```
 
 **`~/.claude/rules/react.md`:**
@@ -393,15 +416,28 @@ Self-check:
 Invoke `vercel-react-best-practices` skill FIRST.
 Self-check:
 1. Server Components default. `"use client"` only for interaction
-2. Heavy compute → `useMemo` w/ stable deps. Never in `.map()` callbacks
-3. No `enum`. `as const` objects
+2. Heavy compute (`find()`/`filter()`/`sort()`/tz/O(n) scans) → `useMemo` stable deps. Never in `.map()` callbacks, JSX attrs, render body
+3. No `enum` — `as const` objects: `{ FOO: 'foo' } as const`
 4. Status variants → `Record<Status, Variant>` map, not ternary chains
 ```
 
 **`~/.claude/rules/appwrite.md`:**
 ```md
 # Appwrite gate
-Invoke `appwrite-backend` skill FIRST for ANY Appwrite code.
+Invoke `appwrite-backend` skill FIRST for ANY Appwrite code (TablesDB/Auth/Storage/Functions/Realtime).
+
+## Backend compliance check
+Use `api-designer` agent when reviewing Appwrite backend. Agent has project Appwrite MCP tools.
+
+Agent MUST:
+1. Grep ALL `Query.select([...])` calls
+2. Extract field names
+3. Fetch live schema via Appwrite CLI (see `appwrite-backend` skill → `references/appwrite-cli.md` for full command list, e.g. `appwrite databases list-attributes --database-id <id> --table-id <id>`) or project Appwrite MCP as fallback
+4. Flag selected fields not in collection attrs
+5. Flag missing indexes on queried fields
+6. Overall compliance via `appwrite-backend` skill
+
+Guard: only if project uses Appwrite.
 ```
 
 Swap in your own stacks. the point is one skill-gated rule file per framework you actually ship.

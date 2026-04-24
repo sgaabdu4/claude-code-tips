@@ -1,43 +1,31 @@
 # Rules
 
 ## Principles
-DRY/KISS/YAGNI/SSOT. No guess—read code first. Search existing before add. Min scope.
-Verify: lint+typecheck+tests. Fail→change approach. Ask before destructive.
+DRY/KISS/YAGNI/SSOT. Read code first, no guess. Search before add. Min scope. Verify lint+typecheck+tests. Fail→change approach. Ask before destructive. Never commit secrets. `AskUserQuestion` to clarify.
 
 ## Skill gates
-Dart/Flutter → `building-flutter-apps` FIRST.
-React/Next → `vercel-react-best-practices` FIRST.
-Appwrite → `appwrite-backend` FIRST.
+Dart/Flutter → `building-flutter-apps` FIRST. React/Next → `vercel-react-best-practices` FIRST. Appwrite → `appwrite-backend` FIRST. Checklists: `.claude/rules/`.
 
-## Ripple check - NON-NEGOTIABLE
-Any add/change/remove: MUST grep symbol + CBM `trace_path` to find ALL usages.
-Update every call site in same change - never partial.
+## Ripple check — NON-NEGOTIABLE
+Edit one site, miss others → break. Any add/change/remove: grep symbol + CBM `trace_path` ALL usages. Update every call site. Linter miss loose types/`dynamic`/`any`/optional. Never trust "only used here".
 
 ## TDD
-Red/green/refactor. Tests first. Happy+fail+edge every change.
+Red/green/refactor. Tests first. Happy+fail+edge. Edges: empty/null/boundary/concurrency/tz/unicode/overflow/permission/network/partial.
 
 ## Tools
-CBM (code 99% save) + context-mode (shell sandbox).
+CBM + context-mode.
 
 ### Session start (MANDATORY)
-`index_status` → unindexed? `index_repository`. Indexed? `detect_changes`. Before any code work.
+`index_status` → unindexed? `index_repository`. Indexed? `detect_changes`. Before code work.
 
 ### Code → CBM graph, never grep→read→grep
-`search_graph`/`search_code` find. `trace_path` connect. `get_architecture` structure.
-`get_code_snippet` read. `query_graph` Cypher. Fallback `Grep`/`Glob`/`Read` only if unindexed.
+`search_graph`/`search_code` find. `trace_path` connect. `get_architecture` structure. `get_code_snippet` read. `query_graph` Cypher. Fallback `Grep`/`Glob`/`Read` only if unindexed.
 
 ### Shell/run/read → context-mode sandbox
-`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` large file.
-`ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store.
-No `| tail`/`| head`.
+`ctx_batch_execute` >1 cmd or >20 lines. `ctx_execute` run code. `ctx_execute_file` big file. `ctx_fetch_and_index` URL (not `WebFetch`). `ctx_search` follow-up + recall. `ctx_index` store. No `|tail`/`|head`.
 
 ### Files
-`Read` + `Edit`/`Write`. `Read` before `Edit`. No `ctx_execute` for writes.
-
-### Docs
-`tvly` CLI first (skills: `tavily-cli`, `tavily-dynamic-search`). Never trust training for
-signatures/versions/READMEs. `tvly search` topic; `tvly extract <url>` known URL;
-`ctx_fetch_and_index` fallback.
+`Read`+`Edit`/`Write`. Read before Edit. No `ctx_execute` for writes.
 
 ### Banned Bash
 `cat`/`head`/`tail`/`grep`/`find`.
@@ -55,8 +43,27 @@ signatures/versions/READMEs. `tvly search` topic; `tvly extract <url>` known URL
 | Recall prior | `ctx_search` |
 
 ## Subagents
-Default: delegate. Main thread coordinate only.
-Parallel: independent → one msg, multiple `Agent`.
+Delegate default. Main = coordinator.
+- **MANDATORY delegate**: online research (tvly/ctx_fetch_and_index), refactor >2 files, summarize >1 file, audit, explore unknown repo, multi-file impact, big log triage.
+- **Skip**: 1-file read, 1-grep, single-known-path edit. Inline.
+- **Parallel cap**: 3 concurrent. Serial if dependent.
+- **Type**: `general-purpose` (edits), `Plan` (read-only arch), `Explore` (read-only nav).
+- **Prompt**: self-contained, <500 tok. Goal + context + constraint + return format.
+- **Return**: "report <200 words".
+- **Model**: default sonnet via `CLAUDE_CODE_SUBAGENT_MODEL` env. Override `model: claude-opus-4-7` in agent frontmatter for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
+- Big task → advisor review after.
+
+## Handoff
+PreCompact hook auto-writes `docs/handoff-context.md` via `claude -p --bare`. SessionStart hook (matcher compact|resume) auto-inlines file. Manual `/handoff` anytime. Delete file after resume.
+
+## Writing
+Active voice. Concrete. No puffery (robust/seamless/leverage/delve/pivotal/groundbreaking/multifaceted/foster/tapestry). Mermaid when diagram > prose.
 
 ## Replies
-Min tokens. Answer first. Bullets > prose. No filler/preamble/recap/summary.
+Min tokens. Answer first. Bullets > prose. No filler/preamble/recap/summary. No status narration between tools.
+
+## Context hygiene
+Long task: checkpoint to auto-memory.
+
+## Per-project
+Project `CLAUDE.md` overrides. Read `CLAUDE.md`/`architecture.md`/`/docs` before cross-cutting.

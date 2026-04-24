@@ -139,6 +139,103 @@ CRITICAL - Code Discovery Protocol:
 REMINDER
 HOOKEOF
 
+# ── Hook: handoff-precompact ──
+cat > "$HOME/.claude/hooks/handoff-precompact" << 'HOOKEOF'
+#!/usr/bin/env bash
+# PreCompact hook — auto-synthesize handoff JSON before compaction.
+# Calls claude -p --bare headless with transcript tail; falls back to raw dump.
+set -uo pipefail
+INPUT=$(cat)
+TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
+[[ -z "${TRANSCRIPT:-}" || ! -f "$TRANSCRIPT" ]] && exit 0
+[[ -z "${CWD:-}" ]] && CWD="."
+mkdir -p "$CWD/docs"
+OUT="$CWD/docs/handoff-context.md"
+PROMPT='You are generating a session handoff for the NEXT Claude Code session. Read the transcript provided below. Output STRICT JSON ONLY — no preamble, no prose, no markdown fences. Schema: {"session_started":"ISO8601","task":"one sentence","completed_tasks":[],"current_state":"...","constraints_to_preserve":["verbatim user rules"],"files_touched":[{"path":"","status":"created|modified|deleted","summary":""}],"issues_discovered":[],"open_questions":[],"next_steps":["ordered, next_steps[0] first"],"resume_prompt":"one paragraph"}. Quote user rules verbatim. Concrete not vague. Must parse as valid JSON.'
+TIMEOUT_BIN=""
+if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout 60"
+elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout 60"
+else TIMEOUT_BIN="perl -e \"alarm 60; exec @ARGV or die\" --"
+fi
+run_with_claude() {
+  command -v claude >/dev/null 2>&1 || return 1
+  { printf '%s\n\nTRANSCRIPT (JSONL, newest last):\n' "$PROMPT"; tail -c 200000 "$TRANSCRIPT"; } \
+    | eval "$TIMEOUT_BIN claude -p --bare --model claude-sonnet-4-6 --output-format text" > "$OUT.tmp" 2>/dev/null
+  if [[ -s "$OUT.tmp" ]] && jq empty < "$OUT.tmp" >/dev/null 2>&1; then mv "$OUT.tmp" "$OUT"; return 0; fi
+  rm -f "$OUT.tmp"; return 1
+}
+fallback_raw_dump() {
+  { printf '{"status":"HANDOFF_AUTO_PARTIAL","note":"claude -p unavailable or failed; raw transcript tail below.","transcript_path":"%s","generated_at":"%s"}\n' "$TRANSCRIPT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; printf '\n---RAW_TRANSCRIPT_TAIL---\n'; tail -c 50000 "$TRANSCRIPT"; } > "$OUT"
+}
+run_with_claude || fallback_raw_dump
+exit 0
+HOOKEOF
+
+# ── Hook: handoff-session-resume ──
+cat > "$HOME/.claude/hooks/handoff-session-resume" << 'HOOKEOF'
+#!/usr/bin/env bash
+# SessionStart hook (matcher compact|resume). Inlines handoff JSON via documented
+# hookSpecificOutput.additionalContext.
+HANDOFF_FILE="$(pwd)/docs/handoff-context.md"
+[[ -f "$HANDOFF_FILE" ]] || exit 0
+SIZE=$(wc -c < "$HANDOFF_FILE" | tr -d ' ')
+AGE_SECS=$(( $(date +%s) - $(stat -f %m "$HANDOFF_FILE" 2>/dev/null || stat -c %Y "$HANDOFF_FILE" 2>/dev/null || echo 0) ))
+AGE_HRS=$(( AGE_SECS / 3600 ))
+if (( SIZE > 9000 )); then
+  CONTEXT=$(printf 'Prior session handoff exists: %s (%sB, %sh old). File too large to inline. Read it with the Read tool. Treat constraints_to_preserve as hard rules. Execute next_steps[0] first. Delete the file after resuming.' "$HANDOFF_FILE" "$SIZE" "$AGE_HRS")
+else
+  JSON_CONTENT=$(cat "$HANDOFF_FILE")
+  CONTEXT=$(printf 'Prior session handoff (auto-generated on compact, age %sh). Do NOT re-explore the codebase. Treat constraints_to_preserve as hard rules. If user request matches next_steps, execute next_steps[0] first. Delete docs/handoff-context.md after resuming.\n\n%s' "$AGE_HRS" "$JSON_CONTENT")
+fi
+jq -n --arg ctx "$CONTEXT" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+exit 0
+HOOKEOF
+
+# ── Slash command: /handoff (manual trigger) ──
+mkdir -p "$HOME/.claude/commands"
+cat > "$HOME/.claude/commands/handoff.md" << 'CMDEOF'
+---
+description: Save current session state as strict JSON to docs/handoff-context.md for the next session to resume from.
+---
+
+# Handoff
+
+Write current session state to `docs/handoff-context.md` as strict JSON. No preamble, no prose, no fences — pure JSON.
+
+## Procedure
+
+1. `docs/` missing? create (`mkdir -p docs` via Bash).
+2. Synthesize state from this convo. Don't re-explore — use ctx.
+3. Write `docs/handoff-context.md` via Write tool. Must parse as valid JSON.
+4. Confirm ONE line: `Handoff saved: docs/handoff-context.md`.
+
+## Schema
+
+```json
+{
+  "session_started": "ISO8601 best estimate",
+  "task": "one sentence — what the user asked for",
+  "completed_tasks": ["one line each, concrete things finished this session"],
+  "current_state": "where things stand right now — in-flight work, files modified, what works, what's broken",
+  "constraints_to_preserve": ["user rules verbatim", "ruled-out approaches + why", "tech constraints"],
+  "files_touched": [{"path": "absolute path", "status": "created|modified|deleted", "summary": "one line"}],
+  "issues_discovered": ["bugs/gotchas + how we worked around them"],
+  "open_questions": ["unresolved decisions"],
+  "next_steps": ["ordered, specific. first item = first action"],
+  "resume_prompt": "one paragraph the user can paste into a fresh session to resume"
+}
+```
+
+## Rules
+
+- Verbatim constraints: never paraphrase user rules.
+- Concrete, not vague.
+- Ordered next_steps: array order = execution order.
+- Pure JSON: file must parse. No headings, no fences, no trailing prose.
+- Overwrite: always overwrite. One handoff per project.
+CMDEOF
+
 # Make all hooks executable
 chmod +x "$HOME/.claude/hooks/"*
 
@@ -217,25 +314,27 @@ echo "→ Configuring settings.json..."
 
 cat > "$HOME/.claude/settings.json" << 'SETTINGSEOF'
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
     "ENABLE_PROMPT_CACHING_1H": "1"
   },
   "permissions": {
     "defaultMode": "auto"
   },
-  "effortLevel": "medium",
+  "model": "claude-opus-4-7[1m]",
+  "effortLevel": "high",
   "advisorModel": "opus",
   "skipDangerousModePermissionPrompt": true,
   "skipAutoPermissionPrompt": true,
   "statusLine": {
     "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh",
-    "refreshInterval": 1000
+    "command": "bash ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
     "caveman@caveman": true
@@ -275,7 +374,8 @@ cat > "$HOME/.claude/settings.json" << 'SETTINGSEOF'
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code precompact" }
+          { "type": "command", "command": "context-mode hook claude-code precompact" },
+          { "type": "command", "command": "~/.claude/hooks/handoff-precompact", "timeout": 90 }
         ]
       }
     ],
@@ -286,19 +386,21 @@ cat > "$HOME/.claude/settings.json" << 'SETTINGSEOF'
         ]
       },
       {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/handoff-session-resume" },
+          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
+        ]
+      },
+      {
         "matcher": "resume",
         "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/handoff-session-resume" },
           { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
         ]
       },
       {
         "matcher": "clear",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "compact",
         "hooks": [
           { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
         ]
@@ -363,7 +465,8 @@ echo "  ✓ Headroom (API-layer compression, bundles RTK)"
 echo "  ✓ codebase-memory-mcp (knowledge graph for code)"
 echo "  ✓ context-mode (output virtualization)"
 echo "  ✓ Caveman plugin (compressed Claude output)"
-echo "  ✓ 5 enforcement hooks"
+echo "  ✓ 6 enforcement hooks (incl handoff-precompact + handoff-session-resume)"
+echo "  ✓ /handoff slash command"
 echo "  ✓ Custom statusline"
 echo "  ✓ Optimized settings.json"
 echo "  ✓ Shell wrappers (fish/zsh/bash)"

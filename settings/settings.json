@@ -1,24 +1,25 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
     "ENABLE_PROMPT_CACHING_1H": "1"
   },
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "claude-opus-4-6[1M]",
-  "effortLevel": "medium",
+  "model": "claude-opus-4-7[1m]",
+  "effortLevel": "high",
   "advisorModel": "opus",
   "skipDangerousModePermissionPrompt": true,
   "skipAutoPermissionPrompt": true,
   "statusLine": {
     "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh",
-    "refreshInterval": 1000
+    "command": "bash ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
     "caveman@caveman": true
@@ -58,7 +59,8 @@
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "context-mode hook claude-code precompact" }
+          { "type": "command", "command": "context-mode hook claude-code precompact" },
+          { "type": "command", "command": "~/.claude/hooks/handoff-precompact", "timeout": 90 }
         ]
       }
     ],
@@ -69,19 +71,21 @@
         ]
       },
       {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/handoff-session-resume" },
+          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
+        ]
+      },
+      {
         "matcher": "resume",
         "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/handoff-session-resume" },
           { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
         ]
       },
       {
         "matcher": "clear",
-        "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
-        ]
-      },
-      {
-        "matcher": "compact",
         "hooks": [
           { "type": "command", "command": "~/.claude/hooks/cbm-session-reminder" }
         ]

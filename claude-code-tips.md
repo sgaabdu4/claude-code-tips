@@ -1,6 +1,6 @@
 # How I Cut Claude Code Token Usage by 90%+ With 5 Tools, Custom Hooks, and Enforcement
 
-> **TL;DR:** I stack 5 layers to cut Claude Code token usage by 90%+: (1) **Codebase Memory MCP**: knowledge graph replaces file reads for code exploration (99% savings), (2) **context-mode**: sandboxes large outputs and returns only summaries (98% savings), (3) **RTK**: compresses CLI output in-place (60-90% savings), (4) **Headroom**: API proxy that compresses the entire prompt before it leaves your machine (47-92% savings), (5) **Caveman**: makes Claude's own responses terse (50-75% savings). Custom hooks *enforce* these tools so Claude can't bypass them. Sessions go from ~30 min to 3+ hours. One-click install script at the bottom.
+> **TL;DR:** I stack 5 layers to cut Claude Code token usage by 90%+: (1) **Codebase Memory MCP**: knowledge graph replaces file reads for code exploration (99% savings), (2) **context-mode**: sandboxes large outputs and returns only summaries (98% savings), (3) **RTK**: compresses CLI output in-place (60-90% savings), (4) **Headroom**: API proxy that compresses the entire prompt before it leaves your machine (47-92% savings), (5) **Caveman**: makes Claude's own responses terse (50-75% savings). Custom hooks *enforce* these tools so Claude can't bypass them. Plus an auto-handoff system that survives compaction so long sessions never lose state. Sessions go from ~30 min to 3+ hours. One-click install script at the bottom.
 
 ### Cheat sheet: every tip in 60 seconds
 
@@ -13,7 +13,8 @@
 - **CLI over MCP** for Tavily/Appwrite: same power, way less context
 - **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks
 - **PostToolUse reject scanners**: ESLint custom rule · node regex scanner · Dart analyzer plugin · Husky + lint-staged
-- **Settings:** `effortLevel: medium`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, autocompact at 70%
+- **Settings:** `effortLevel: high`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50`, `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6`
+- **Auto-handoff on compact:** PreCompact hook calls `claude -p --bare` to write `docs/handoff-context.md`; SessionStart hook auto-inlines it next session. Manual `/handoff` anytime.
 - **Multi-model pipeline:** Opus 4.7 plan (or `/ultraplan`) → Opus implement → `/unleash` swarm → cross-vendor review (I use Codex GPT-5.5, any intelligent model works) → same for E2E (Agent Browser dogfood for web, Dart MCP for Flutter)
 - **Measure savings** with [Codeburn](https://github.com/getagentseal/codeburn) · dictate with Fluid Voice (Parakeet)
 
@@ -219,6 +220,44 @@ Caveman installs via the Claude Code third-party plugin marketplace. enable in `
 
 ---
 
+## Auto-handoff: surviving compaction without losing state
+
+Long sessions hit autocompact. Whatever was in flight gets summarized away, and the next turn often re-explores files Claude already read. Solution: a PreCompact hook that synthesizes a structured handoff JSON *before* compaction runs, plus a SessionStart hook that auto-inlines it on the next session.
+
+**The hooks**:
+- `~/.claude/hooks/handoff-precompact` (PreCompact): receives `transcript_path` + `cwd` on stdin, calls `claude -p --bare --model claude-sonnet-4-6` headless with the last 200KB of the JSONL transcript and a strict JSON schema prompt. Writes `<cwd>/docs/handoff-context.md`. 60s timeout. If `claude -p` fails or times out, falls back to a raw transcript-tail dump tagged `HANDOFF_AUTO_PARTIAL` so you still have something to recover from. Exit 0 always so compact proceeds.
+- `~/.claude/hooks/handoff-session-resume` (SessionStart, `matcher: compact|resume`): if `docs/handoff-context.md` exists, emits `{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: "..."}}` to inline the JSON directly into the new session's context. No Read-tool round trip needed.
+- `~/.claude/commands/handoff.md` (slash command): same schema, manual trigger via `/handoff` whenever you want a checkpoint.
+
+**The schema** (10 fields, all required where they apply):
+
+```json
+{
+  "session_started": "ISO8601",
+  "task": "one sentence — overall goal",
+  "completed_tasks": ["concrete things finished"],
+  "current_state": "in-flight work, files modified, what works/broken",
+  "constraints_to_preserve": ["user rules verbatim", "ruled-out approaches + why"],
+  "files_touched": [{"path": "...", "status": "created|modified|deleted", "summary": "..."}],
+  "issues_discovered": ["bugs/gotchas + workarounds"],
+  "open_questions": ["unresolved decisions"],
+  "next_steps": ["ordered, specific. next_steps[0] = literally first action"],
+  "resume_prompt": "one paragraph user can paste into a fresh session"
+}
+```
+
+**Why `--bare`**: the [`--bare` flag](https://code.claude.com/docs/en/cli-reference) on `claude -p` skips auto-discovery of hooks, skills, plugins, MCP servers, auto memory, and CLAUDE.md. The child session only has Bash + file read/edit. No nested hook cascade, no CLAUDE.md re-load, fast cold start. Critical for a hook subprocess.
+
+**Why Sonnet 4.6 not Haiku**: handoff is high-stakes — if next-session quality regresses, the whole point is lost. Sonnet captures nuance on constraints/ruled-out approaches; Haiku tends to flatten them into "did X, will do Y" and lose the *why*. Compact fires once per long session, so the cost (a few cents) is rounding error.
+
+**Pairs with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50`**: by triggering compact at 50% (instead of the default ~95%), the PreCompact hook always has plenty of headroom to do its synthesis work. At 95% you'd be cutting it fine.
+
+**Gotcha**: hook `timeout` field is in **seconds**, not milliseconds (despite some community advice claiming otherwise — verified in the live CLI schema). Set `"timeout": 90`, not `90000`.
+
+[Full hook scripts in repo.](https://github.com/sgaabdu4/claude-code-tips/tree/main/hooks) Slash command at [`commands/handoff.md`](https://github.com/sgaabdu4/claude-code-tips/blob/main/commands/handoff.md).
+
+---
+
 ## Bonus hook: bash-ban-raw-tools
 
 Sibling to the CBM gate. Problem: when Claude runs `cat file.py` or `grep "pattern" src/` via Bash, raw output bypasses every compression hook. `Read`/`Grep` are throttled by MCP + context-mode, but Bash goes straight to context.
@@ -247,38 +286,40 @@ Escape hatch: `touch /tmp/bash-raw-unlock` (auto-expires 10 min).
 
 ```json
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
     "ENABLE_PROMPT_CACHING_1H": "1"
   },
   "permissions": { "defaultMode": "auto" },
-  "model": "claude-opus-4-6[1M]",
-  "effortLevel": "medium",
+  "model": "claude-opus-4-7[1m]",
+  "effortLevel": "high",
   "advisorModel": "opus",
-  "statusLine": { "type": "command", "command": "bash ~/.claude/statusline-command.sh", "refreshInterval": 1000 },
+  "statusLine": { "type": "command", "command": "bash ~/.claude/statusline-command.sh" },
   "enabledPlugins": { "caveman@caveman": true },
   "hooks": {
     "PreToolUse":  [ /* Bash → context-mode + bash-ban-raw-tools; Grep|Glob|Read → cbm-code-discovery-gate */ ],
     "PostToolUse": [ /* context-mode + cbm-mcp-marker */ ],
-    "PreCompact":  [ /* context-mode */ ],
-    "SessionStart":[ /* context-mode + cbm-session-reminder on resume|clear|compact */ ]
+    "PreCompact":  [ /* context-mode + handoff-precompact (timeout: 90 seconds) */ ],
+    "SessionStart":[ /* context-mode + handoff-session-resume on compact|resume + cbm-session-reminder */ ]
   }
 }
 ```
 
 ### What each env var does
 
-Headliners: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` fires compaction aggressively (the 4 compression layers mean you rarely hit it) and `ENABLE_PROMPT_CACHING_1H=1` extends prompt cache TTL from 5 minutes to 1 hour (big cost saver on long sessions). Full table:
+Headliners: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` fires compaction at 50% of context window (instead of the default ~95%) — gives the auto-handoff hook room to work and keeps prompts compact. `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6` pins delegated subagents to Sonnet 4.6 (60% cheaper than Opus, plenty smart for research/refactor/audit). `ENABLE_PROMPT_CACHING_1H=1` extends prompt cache TTL from 5 minutes to 1 hour (big cost saver on long sessions). Full table:
 
 https://gist.github.com/sgaabdu4/f352f61e23f41f331c7d5a5985bc9604
 
 ### Other settings explained
 
-`effortLevel: medium` cuts output tokens per response (bump to `high` for architecture decisions). `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions. Full table:
+`effortLevel: high` keeps Opus 4.7 reasoning unlocked (drop to `medium` for cost-sensitive sessions; default on 4.7 is `xhigh`). `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions. Subagents inherit `claude-sonnet-4-6` from the env var by default — override per-agent with `model: claude-opus-4-7` in `~/.claude/agents/<name>.md` frontmatter for high-stakes work (refactor, multi-file impact, audit). Full table:
 
 https://gist.github.com/sgaabdu4/9ef5dd71813217c695ee5f5944c49680
 
@@ -315,9 +356,18 @@ Any add/change/remove: grep symbol + CBM `trace_path` for ALL usages. Update eve
 
 ## Banned Bash
 `cat`/`head`/`tail`/`grep`/`find`.
+
+## Subagents
+Delegate default. Main = coordinator.
+- MANDATORY delegate: online research, refactor >2 files, audit, multi-file impact, big log triage.
+- Parallel cap: 3 concurrent. Serial if dependent.
+- Model: default sonnet via env. Override `model: claude-opus-4-7` in agent frontmatter for refactor/audit/edge-case-hunter/staff-engineer.
+
+## Handoff
+PreCompact hook auto-writes `docs/handoff-context.md` via `claude -p --bare`. SessionStart hook (matcher compact|resume) auto-inlines file. Manual `/handoff` anytime.
 ```
 
-Full file also covers: Session start protocol (MANDATORY `index_status`), TDD, per-stack skill gates, subagent delegation policy, and reply style rules.
+Full file also covers: Session start protocol (MANDATORY `index_status`), TDD, per-stack skill gates, subagent delegation + model strategy, auto-handoff system, and reply style rules.
 
 ### Per-language rule files
 
@@ -363,7 +413,7 @@ Swap in your own stacks. the point is one skill-gated rule file per framework yo
 Colour-coded dashboard. ctx/5h/7d bars, branch, model, time. Point `statusLine.command` at [`statusline-command.sh`](https://github.com/sgaabdu4/claude-code-tips/blob/main/statusline/statusline-command.sh).
 
 ```
-user in ~/project on  main │ ⬡ o4.6 │ ctx ████░░░░ 48% │ 5h ██░░░░░░ 23% │ 7d █░░░░░░░ 12% │ 09:59
+user in ~/project on  main │ ⬡ o4.7 │ ctx ████░░░░ 48% │ 5h ██░░░░░░ 23% │ 7d █░░░░░░░ 12% │ 09:59
 ```
 
 ---
@@ -395,7 +445,7 @@ With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mi
 4. **Review round 2**: a different intelligent model for a cross-model second opinion. I use Codex (GPT-5.5) because the vendor switch catches blind spots a same-family reviewer misses, but another Claude or Gemini works fine.
 5. **E2E**: same principle: any strong model driving a browser. Codex + VS Code integrated browser works; so does Claude via [Agent Browser's `dogfood` skill](https://github.com/vercel-labs/agent-browser) (clicks every button, tests forms with edge cases, **records video when it finds a potential bug**). For Flutter, the official [Dart MCP](https://docs.flutter.dev/tools/mcp) + Flutter Driver lets the LLM drive real devices end-to-end.
 
-**Model choice, honestly:** it's interchangeable. Opus 4.5+ / 4.7 medium+ for plan and implement is my preference; any GPT-5.3+ Codex (high/xHigh) or same-class Claude works for review and E2E. Cross-vendor review catches more than same-vendor review. The only floor is "intelligent enough". don't review Opus output with Haiku.
+**Model choice, honestly:** it's interchangeable. Opus 4.7 high+ for plan and implement is my preference; any GPT-5.3+ Codex (high/xHigh) or same-class Claude works for review and E2E. Cross-vendor review catches more than same-vendor review. The only floor is "intelligent enough" — don't review Opus output with Haiku. For background subagents (research, audit, refactor) Sonnet 4.6 via `CLAUDE_CODE_SUBAGENT_MODEL` is the sweet spot — 60% cheaper than Opus, plenty smart, with per-agent Opus override for high-stakes work.
 
 Tavily stays hot in the session for live research. docs/signatures/versions never trust training.
 

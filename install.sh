@@ -266,6 +266,18 @@ else
   fi
 fi
 
+# Global context-mode CLI: the plugin registers the MCP tools but does NOT put
+# the `context-mode` binary on PATH. The hooks in settings/settings.json call
+# `context-mode hook claude-code <event>`, so the global CLI is required —
+# without it those hooks fail with "command not found".
+echo "→ Installing context-mode CLI (hook dispatcher binary)..."
+if command -v npm >/dev/null 2>&1; then
+  npm install -g context-mode 2>/dev/null \
+    || echo "  ⚠ npm install -g context-mode failed — run manually after this script."
+else
+  echo "  ⚠ npm not found — install Node.js (https://nodejs.org), then 'npm install -g context-mode'."
+fi
+
 # ── 4. Install tvly CLI (Tavily search/extract) ──
 echo "→ Installing tvly CLI..."
 if command -v npm >/dev/null 2>&1; then

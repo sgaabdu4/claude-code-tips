@@ -126,7 +126,7 @@ Sessions extend from ~30 minutes to ~3 hours on the same 200K context window.
 
 Install as a plugin so its tools land under `mcp__plugin_context-mode_context-mode__*` (the namespace `/e2e`, `/unleash`, and other slash commands reference):
 
-Install via `claude plugin marketplace add mksglu/context-mode` then `claude plugin install context-mode@context-mode` (the [install.sh](https://github.com/sgaabdu4/claude-code-tips/blob/main/install.sh) does this for you). One hook per lifecycle event (`PreToolUse`/`PostToolUse`/`PreCompact`/`SessionStart`), each calling `context-mode hook claude-code <event>`. See [`settings/settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json).
+Install via `claude plugin marketplace add mksglu/context-mode` then `claude plugin install context-mode@context-mode`, **and** install the CLI globally with `npm install -g context-mode` (the [install.sh](https://github.com/sgaabdu4/claude-code-tips/blob/main/install.sh) does both for you). The plugin registers the MCP tools, but the global install is what puts the `context-mode` binary on PATH — the hooks call `context-mode hook claude-code <event>`, so without it they fail with "command not found". One hook per lifecycle event (`PreToolUse`/`PostToolUse`/`PreCompact`/`SessionStart`). See [`settings/settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json).
 
 Tip: add a sibling PreToolUse hook on your test runner (`npm test`, `pytest`, `go test ./...`) that nudges Claude (non-blocking) to use `ctx_batch_execute`. Whole suites produce thousands of lines.
 

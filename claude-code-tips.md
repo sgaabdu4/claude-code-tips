@@ -317,6 +317,18 @@ https://gist.github.com/sgaabdu4/441d7cf66c30c62db122ba55a9e277f9
 
 Layers compound. Each catches what the previous missed.
 
+## Security risks
+
+Do not copy-paste this stack blind. It is a power-user setup that trades prompts and friction for speed.
+
+- `permissions.defaultMode: auto`, `skipDangerousModePermissionPrompt`, and `skipAutoPermissionPrompt` reduce permission prompts. That also means fewer human checkpoints before commands run.
+- The installer pulls third-party code from PyPI, npm, Claude plugin marketplaces, and GitHub releases. Audit, pin, or verify those dependencies before using this on sensitive machines.
+- Headroom, context-mode, CBM, Caveman, hooks, and MCP servers may see prompts, tool outputs, code, logs, and Claude session data. Treat them like local tools with access to secrets.
+- `sync-runner-tools` probes `flutter-driver-mcp` with `npx -y` when runner tooling changes, so pin or disable it if automatic package resolution is outside your risk tolerance.
+- `memory-repo-symlink` puts Claude project memory under `<repo>/.claude/memory`. Add it to `.gitignore` and do not commit memory files; they can contain secrets, API keys, or pasted credentials.
+
+If any of that sounds unacceptable, do a manual install, skip the shell wrapper, keep permission prompts on, and only enable hooks you have audited.
+
 ## Install
 
 ```bash

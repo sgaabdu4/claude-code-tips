@@ -28,10 +28,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/flutter-ctx-redirect"
-          },
-          {
-            "type": "command",
-            "command": "rtk hook claude"
           }
         ]
       },

@@ -17,6 +17,14 @@ cd claude-code-tips && chmod +x install.sh && ./install.sh
 
 Sanity-checks `git`/`curl`/`jq`/`python3` upfront. Installs Headroom (`pip install --user`), CBM binary, context-mode + Caveman plugins via `claude plugin install`, hooks, slash commands, statusline, settings, shell wrapper for your `$SHELL`. **Idempotent** — re-run anytime.
 
+> **One manual step for RTK shell rewriting.** install.sh installs the RTK binary (bundled with Headroom, self-installs to `~/.headroom/bin` on first `headroom wrap`) but does **not** wire RTK's command-rewrite hook — that hook is owned by Headroom, and install.sh owns `settings.json`'s `hooks` block wholesale, so the two would clobber each other on re-run. Run this once at your terminal to install the durable hook:
+>
+> ```bash
+> headroom init claude --global
+> ```
+>
+> It writes `~/.claude/hooks/rtk-rewrite.sh` (delegates to `rtk rewrite`, the single source of truth) and wires it in. Skipping it costs only the shell-rewrite savings — every other layer works without it.
+
 ### Power-user flags
 
 Default stays maximal. These flags narrow blast radius without editing the script:
@@ -64,13 +72,15 @@ Subagent definitions are private by design. The commands can call local agents f
 
 ```
 shell wrapper           claude → headroom wrap claude
-PreToolUse(Bash)        context-mode + bash-ban-raw-tools + flutter-ctx-redirect + rtk
+PreToolUse(Bash)        context-mode‡ + bash-ban-raw-tools + flutter-ctx-redirect + rtk†
 PreToolUse(Grep|...)    cbm-code-discovery-gate
-PostToolUse             context-mode + cbm-mcp-marker
+PostToolUse             context-mode‡ + cbm-mcp-marker
 PostToolUse(Edit|Write) sync-copilot-on-edit + sync-runner-tools-on-edit
-PreCompact              context-mode
-SessionStart            context-mode + memory-repo-symlink + cbm-session-reminder
+PreCompact              context-mode‡
+SessionStart            context-mode‡ + memory-repo-symlink + cbm-session-reminder
 ```
+
+Unmarked rows are wired by this repo's `settings.json`. `‡` context-mode hooks are self-wired by the plugin (its own `hooks.json`), not by this repo. `†` the rtk rewrite hook is installed by `headroom init claude --global` (see the install note above), not by this repo.
 
 ## Externals (auto-installed by `install.sh`)
 

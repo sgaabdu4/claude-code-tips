@@ -6,14 +6,14 @@
     "ENABLE_PROMPT_CACHING_1H": "1",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8[1m]",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6"
   },
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "claude-opus-4-7",
+  "model": "claude-opus-4-8",
   "effortLevel": "xhigh",
   "advisorModel": "opus",
   "hooks": {

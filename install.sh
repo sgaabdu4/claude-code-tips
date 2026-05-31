@@ -173,8 +173,9 @@ for cmd in git curl jq python3; do
 done
 if [[ -n "$missing" ]]; then
   echo "❌ Missing required tools:$missing"
-  echo "   macOS:  brew install$missing"
-  echo "   Debian: sudo apt-get install -y$missing"
+  echo "   macOS:             brew install$missing"
+  echo "   Debian/Ubuntu:     sudo apt-get install -y$missing"
+  echo "   RHEL/Rocky/Fedora: sudo dnf install -y epel-release && sudo dnf install -y$missing   # jq lives in EPEL"
   echo "   Re-run install.sh once they are on PATH."
   exit 1
 fi
@@ -182,21 +183,53 @@ fi
 prepare_settings_source
 
 # ── 1. Install Headroom (includes RTK) ──
-# `--user` keeps us off the system Python and dodges PEP 668
-# "externally-managed-environment" errors on Homebrew Python 3.11+ /
-# Debian-flavour distros. Falls back to plain pip if --user is unsupported
-# (e.g. a venv where --user makes no sense).
+# Headroom needs Python >=3.10 (PyPI metadata: requires_python ">=3.10").
+# Distros whose default `python3` is older break here: RHEL/Rocky 8 ship 3.6.8,
+# so bare `pip3` targets the wrong interpreter and the install fails. Fix: pick
+# the newest interpreter >=3.10, build an isolated venv from it, and symlink the
+# `headroom` entrypoint onto PATH (~/.local/bin). The venv also sidesteps PEP 668
+# "externally-managed-environment" errors on Homebrew/Debian without --user.
+# Idempotent: an existing venv is reused. Extras = [all] for full feature parity
+# with the article's stack (memory/voice/ml/image/integrations all included).
+# NOTE: [all] is HEAVY — it pulls sentence-transformers + torch + a full CUDA
+# stack (multi-GB); the venv isolates it from the system. Want a lean, torch-free
+# install instead? Set HR_EXTRAS="proxy,mcp,code" (proxy is the mandatory wrap/
+# proxy core). RTK self-installs (musl static binary) on the first `headroom wrap`.
 echo "→ Installing Headroom..."
-HR_CMD=""
-if command -v pip3 >/dev/null 2>&1; then HR_CMD="pip3"
-elif command -v pip  >/dev/null 2>&1; then HR_CMD="pip"
-fi
-if [[ -n "$HR_CMD" ]]; then
-  "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
-    || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null \
-    || echo "  ⚠ pip install failed. Run manually: $HR_CMD install --user 'headroom-ai[all]'"
+HR_EXTRAS="all"
+HR_VENV="$HOME/.local/share/headroom-venv"
+
+# find_py310: echo the first python on PATH whose version is >= 3.10, else fail.
+find_py310() {
+  local cand
+  for cand in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    if "$cand" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 10) else 1)' 2>/dev/null; then
+      command -v "$cand"; return 0
+    fi
+  done
+  return 1
+}
+
+HR_PY="$(find_py310 || true)"
+if [[ -z "$HR_PY" ]]; then
+  echo "  ⚠ No Python >=3.10 found — Headroom requires it. Install one, then re-run:"
+  echo "    RHEL/Rocky 8:  sudo dnf install -y python3.11"
+  echo "    Debian/Ubuntu: sudo apt-get install -y python3.11-venv"
+  echo "    macOS:         brew install python@3.12"
 else
-  echo "  ⚠ pip / pip3 not found — install Python 3 + pip, then run: pip install --user 'headroom-ai[all]'"
+  [[ -x "$HR_VENV/bin/python" ]] || "$HR_PY" -m venv "$HR_VENV" 2>/dev/null \
+    || echo "  ⚠ venv creation failed ($HR_PY). Need the venv module: dnf/apt install the python3.x-venv package."
+  if [[ -x "$HR_VENV/bin/pip" ]]; then
+    "$HR_VENV/bin/pip" install -q -U pip >/dev/null 2>&1 || true
+    if "$HR_VENV/bin/pip" install -q "headroom-ai[$HR_EXTRAS]" 2>/dev/null; then
+      mkdir -p "$HOME/.local/bin"
+      ln -sf "$HR_VENV/bin/headroom" "$HOME/.local/bin/headroom"
+      echo "  ✓ Headroom installed ($("$HR_VENV/bin/python" -V 2>&1), extras: $HR_EXTRAS) → ~/.local/bin/headroom"
+    else
+      echo "  ⚠ Headroom install failed. Retry verbosely: $HR_VENV/bin/pip install 'headroom-ai[$HR_EXTRAS]'"
+    fi
+  fi
 fi
 
 # ── 2. Install codebase-memory-mcp ──

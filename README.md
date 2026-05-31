@@ -91,6 +91,25 @@ SessionStart            context-mode + memory-repo-symlink + cbm-session-reminde
 
 `install.sh` does **not** install these — the e2e commands abort with the relevant install hint if you run them without the tool.
 
+## RHEL / Rocky Linux 8 notes
+
+The base toolchain on RHEL 8 / Rocky 8 lags what parts of the stack need. `install.sh` handles most of it; context-mode needs one manual step.
+
+- **`jq` is in EPEL**: `sudo dnf install -y epel-release && sudo dnf install -y jq`.
+- **Headroom needs Python ≥3.10** — Rocky 8's default `python3` is 3.6. `install.sh` auto-detects the newest `python3.x` ≥3.10, builds an isolated venv, and symlinks `headroom`. If none exists: `sudo dnf install -y python3.11`, then re-run.
+- **context-mode's bundled `better-sqlite3` won't build with the default compiler.** The plugin installs via `bun`, which silently skips compiling its native FTS5 store (`better-sqlite3`); Rocky 8's default **gcc 8.5 can't build it** (`-std=c++20` unsupported), so the MCP shows `✗ Failed to connect` in `claude mcp list` even though `/plugin install context-mode@context-mode` "succeeded". Compile the binding once with a newer toolchain (`sudo dnf install -y gcc-toolset-13` if absent — it static-links the newer `libstdc++`, so the result still runs on base glibc). A node-gyp quirk deletes the dependency-file dir on every run, so use a **two-pass make**:
+
+  ```bash
+  P=~/.claude/plugins/cache/context-mode/context-mode/<version>/node_modules/better-sqlite3
+  . /opt/rh/gcc-toolset-13/enable                                 # C++20 compiler on PATH
+  PYTHON=/usr/bin/python3.11 make -C "$P/build" >/dev/null 2>&1   # pass 1: run sqlite3 codegen ACTION (fails at compile, expected)
+  mkdir -p "$P/build/Release/.deps/Release/obj.target/sqlite3/gen/sqlite3" \
+           "$P/build/Release/.deps/Release/obj.target/better_sqlite3/src"
+  PYTHON=/usr/bin/python3.11 make -C "$P/build"                   # pass 2: compiles + links better_sqlite3.node
+  ```
+
+  `PYTHON=python3.11` is required because node-gyp 10 rejects Python 3.6. Verify with `claude mcp list` (`context-mode … ✓ Connected`). Re-run after any context-mode version bump — a new version installs to a new cache dir with no compiled binding.
+
 ## Read the full story
 
 The Medium post walks through the *why* of each layer, the failure modes that drove every hook, and the cost math. Start there: [`claude-code-tips.md`](./claude-code-tips.md).

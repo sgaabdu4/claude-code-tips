@@ -526,9 +526,12 @@ if [[ "$INSTALL_SHELL_WRAPPER" -eq 1 ]]; then
       if ! grep -q 'headroom wrap claude' "$rc" 2>/dev/null; then
         cat >> "$rc" << 'FISHEOF'
 
-# CBM + Headroom binaries live in ~/.local/bin
+# CBM + Headroom binaries live in ~/.local/bin; rtk lives in ~/.headroom/bin
 if not contains $HOME/.local/bin $PATH
     set -gx PATH $HOME/.local/bin $PATH
+end
+if not contains $HOME/.headroom/bin $PATH
+    set -gx PATH $HOME/.headroom/bin $PATH
 end
 
 # Headroom wraps Claude Code for API-layer token compression
@@ -548,8 +551,9 @@ FISHEOF
       if ! grep -q 'headroom wrap claude' "$rc" 2>/dev/null; then
         cat >> "$rc" << 'ZSHEOF'
 
-# CBM + Headroom binaries live in ~/.local/bin
+# CBM + Headroom binaries live in ~/.local/bin; rtk lives in ~/.headroom/bin
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac
+case ":$PATH:" in *":$HOME/.headroom/bin:"*) ;; *) export PATH="$HOME/.headroom/bin:$PATH";; esac
 
 # Headroom wraps Claude Code for API-layer token compression
 claude() { command headroom wrap claude -- "$@"; }
@@ -566,8 +570,9 @@ ZSHEOF
       if ! grep -q 'headroom wrap claude' "$rc" 2>/dev/null; then
         cat >> "$rc" << 'BASHEOF'
 
-# CBM + Headroom binaries live in ~/.local/bin
+# CBM + Headroom binaries live in ~/.local/bin; rtk lives in ~/.headroom/bin
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac
+case ":$PATH:" in *":$HOME/.headroom/bin:"*) ;; *) export PATH="$HOME/.headroom/bin:$PATH";; esac
 
 # Headroom wraps Claude Code for API-layer token compression
 claude() { command headroom wrap claude -- "$@"; }

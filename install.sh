@@ -299,6 +299,55 @@ else
   fi
 fi
 
+# ── 3b. RHEL/Rocky: compile context-mode's better-sqlite3 native binding ──
+# context-mode bundles better-sqlite3 (its FTS5 store). On RHEL 8 / Rocky 8
+# the default gcc (8.5) can't build it (-std=c++20 unsupported) and the
+# plugin installs via bun, which skips the native compile — so the MCP shows
+# "✗ Failed to connect" until the binding is built with a newer toolchain.
+# Best-effort, non-fatal fixup: runs only on RHEL-family hosts, only when the
+# binding fails to load, and never aborts the install (see README Rocky notes).
+if [[ -f /etc/redhat-release ]] && command -v node >/dev/null 2>&1; then
+  BSQ="$(ls -d "$HOME"/.claude/plugins/cache/context-mode/context-mode/*/node_modules/better-sqlite3 2>/dev/null | sort -V | tail -1)"
+  bsq_loads() { node -e "const D=require('$1'); new D(':memory:').close()" >/dev/null 2>&1; }
+  if [[ -n "$BSQ" ]] && ! bsq_loads "$BSQ"; then
+    echo "→ context-mode: building better-sqlite3 native binding (RHEL/Rocky)..."
+    # C++20 compiler: gcc-toolset static-links newer libstdc++ → runs on base glibc
+    GTS=""
+    for v in 14 13 12; do
+      [[ -f "/opt/rh/gcc-toolset-$v/enable" ]] && { GTS="/opt/rh/gcc-toolset-$v/enable"; break; }
+    done
+    # node-gyp 10 needs Python >= 3.8 (rejects the 3.6 default)
+    GYP_PY=""
+    for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8; do
+      command -v "$p" >/dev/null 2>&1 && { GYP_PY="$(command -v "$p")"; break; }
+    done
+    if [[ -z "$GTS" || -z "$GYP_PY" ]]; then
+      echo "  ⚠ Need gcc-toolset (C++20) + Python>=3.8. Install, then re-run ./install.sh:"
+      echo "    sudo dnf install -y gcc-toolset-13 python3.11"
+    else
+      (
+        set +e
+        . "$GTS"
+        export PYTHON="$GYP_PY"
+        # bun skips node-gyp configure, so the build/ Makefile may be absent
+        [[ -f "$BSQ/build/Makefile" ]] || npx -y node-gyp@latest configure --directory="$BSQ" >/dev/null 2>&1
+        # Two-pass make: node-gyp deletes the .deps dir on the sqlite3 codegen
+        # ACTION, so pass 1 fails at compile; recreate the dirs, then pass 2
+        # compiles + links better_sqlite3.node.
+        make -C "$BSQ/build" >/dev/null 2>&1
+        mkdir -p "$BSQ/build/Release/.deps/Release/obj.target/sqlite3/gen/sqlite3" \
+                 "$BSQ/build/Release/.deps/Release/obj.target/better_sqlite3/src"
+        make -C "$BSQ/build" >/dev/null 2>&1
+      ) || true
+      if bsq_loads "$BSQ"; then
+        echo "  ✓ better-sqlite3 built — context-mode MCP will connect."
+      else
+        echo "  ⚠ Auto-build failed. See 'RHEL / Rocky Linux 8 notes' in README.md for the manual recipe."
+      fi
+    fi
+  fi
+fi
+
 # ── 4. Install tvly CLI (Tavily search/extract) ──
 echo "→ Installing tvly CLI..."
 if command -v npm >/dev/null 2>&1; then
@@ -534,7 +583,8 @@ if not contains $HOME/.headroom/bin $PATH
     set -gx PATH $HOME/.headroom/bin $PATH
 end
 
-# Headroom wraps Claude Code for API-layer token compression
+# Headroom wraps Claude Code for API-layer token compression (telemetry off)
+set -gx HEADROOM_TELEMETRY off
 function claude
     command headroom wrap claude -- $argv
 end
@@ -555,7 +605,8 @@ FISHEOF
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac
 case ":$PATH:" in *":$HOME/.headroom/bin:"*) ;; *) export PATH="$HOME/.headroom/bin:$PATH";; esac
 
-# Headroom wraps Claude Code for API-layer token compression
+# Headroom wraps Claude Code for API-layer token compression (telemetry off)
+export HEADROOM_TELEMETRY=off
 claude() { command headroom wrap claude -- "$@"; }
 ZSHEOF
       fi
@@ -574,7 +625,8 @@ ZSHEOF
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac
 case ":$PATH:" in *":$HOME/.headroom/bin:"*) ;; *) export PATH="$HOME/.headroom/bin:$PATH";; esac
 
-# Headroom wraps Claude Code for API-layer token compression
+# Headroom wraps Claude Code for API-layer token compression (telemetry off)
+export HEADROOM_TELEMETRY=off
 claude() { command headroom wrap claude -- "$@"; }
 BASHEOF
       fi

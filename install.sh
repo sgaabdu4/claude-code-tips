@@ -523,9 +523,9 @@ merge_settings_json() {
   fi
 }
 
-# ── 5. Copy hooks, commands, rules, bin (per-file backup on conflict) ──
-echo "→ Copying hooks, commands, rules, bin (backups for changed files)..."
-mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/commands" "$HOME/.claude/rules" "$HOME/.claude/bin"
+# ── 5. Copy hooks, commands, rules, agents, bin (per-file backup on conflict) ──
+echo "→ Copying hooks, commands, rules, agents, bin (backups for changed files)..."
+mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/commands" "$HOME/.claude/rules" "$HOME/.claude/bin" "$HOME/.claude/agents"
 for src in "$REPO_DIR/hooks/"*; do
   [[ -f "$src" ]] && cp_with_backup "$src" "$HOME/.claude/hooks/$(basename "$src")"
 done
@@ -539,6 +539,14 @@ done
 if [[ -d "$REPO_DIR/bin" ]]; then
   for src in "$REPO_DIR/bin/"*; do
     [[ -f "$src" ]] && cp_with_backup "$src" "$HOME/.claude/bin/$(basename "$src")"
+  done
+fi
+# agents/: ship the /ship discovery + stack-auditor subagents. Per-file copy means
+# private/runtime agents already in ~/.claude/agents/ (e.g. e2e-*-runner rewritten by
+# sync-runner-tools.mjs) are left untouched — only the repo's own agent files are written.
+if [[ -d "$REPO_DIR/agents" ]]; then
+  for src in "$REPO_DIR/agents/"*.md; do
+    [[ -f "$src" ]] && cp_with_backup "$src" "$HOME/.claude/agents/$(basename "$src")"
   done
 fi
 chmod +x "$HOME/.claude/hooks/"* "$HOME/.claude/bin/"*.mjs 2>/dev/null || true
@@ -665,7 +673,7 @@ else
 fi
 echo "  ✓ All enforcement hooks from repo hooks/"
 echo "  ✓ All slash commands from repo commands/"
-echo "  ✓ Private agent definitions left untouched in ~/.claude/agents/"
+echo "  ✓ /ship discovery + stack-auditor agents from repo agents/ (private/runtime agents left untouched)"
 echo "  ✓ Stack rules dir created at ~/.claude/rules/ (empty by design — drop your own per rules/README.md)"
 echo "  ✓ bin/ helper scripts (sync-copilot, sync-runner-tools)"
 echo "  ✓ Custom statusline"

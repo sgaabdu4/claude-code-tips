@@ -16,8 +16,17 @@ Five phases. Each phase = recovery point. STOP between phases on fail.
 ## Phase 0 — Bootstrap
 
 1. `index_status`. Unindexed → `index_repository`. Else `detect_changes`.
-2. `get_architecture` → stack detect (flutter|react|next|node|other).
-3. Scan `package.json` / `pubspec.yaml` for: test cmd, lint cmd, typecheck cmd. Save:
+2. `get_architecture` → stack detect (django|vue|python|node|other).
+3. Detect build/test tooling — **detect installed commands, don't hardcode**:
+   - **Python/Django**: scan `pyproject.toml` / `setup.cfg` / `tox.ini` / `requirements*.txt` / `manage.py`.
+     - TEST_CMD: `pytest` if `pytest`/`pytest-django` in deps OR `[tool.pytest.ini_options]` present; else `python manage.py test`.
+     - LINT_CMD: `ruff check .` if `ruff` present; else `flake8`.
+     - TYPECHECK_CMD: `mypy .` if `mypy` present; else skip + note gap in plan.
+   - **Vue/JS**: scan `package.json` scripts + devDependencies.
+     - TEST_CMD: `npm run test` (vitest/jest per devDeps).
+     - LINT_CMD: `npm run lint` (eslint) if script exists; else `npx eslint .`.
+     - TYPECHECK_CMD: `vue-tsc --noEmit` if `vue-tsc` present; else `npm run typecheck` if script exists; else skip + note gap.
+   Save:
    ```
    STACK=<name>
    TEST_CMD=<cmd>
@@ -45,10 +54,9 @@ Spawn parallel (single message, multi Agent calls). Each agent self-contained, r
 - `qa-engineer` — test plan: happy + fail + edge per task
 
 **Stack-conditional (only if detected and installed locally):**
-- flutter → `flutter-auditor`
-- react/next → `react-ts-auditor`
+- django/python backend → `django-auditor`
+- vue frontend → `vue-auditor`
 - web ui → `web-ui-auditor`, `ux-reviewer`
-- backend/data service → matching local backend auditor
 - security-sensitive (auth/payment/PII) → `security-reviewer`
 
 If a local subagent type is missing, skip it and note the gap in the plan.

@@ -2,18 +2,16 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_PROMPT_CACHING_1H": "1",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"
   },
   "permissions": {
-    "defaultMode": "auto"
+    "defaultMode": "default"
   },
-  "model": "claude-opus-4-7",
+  "model": "sonnet",
   "effortLevel": "xhigh",
   "advisorModel": "opus",
   "hooks": {
@@ -28,10 +26,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/bash-ban-raw-tools"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/flutter-ctx-redirect"
           },
           {
             "type": "command",
@@ -59,19 +53,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/cbm-mcp-marker"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/sync-copilot-on-edit"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/sync-runner-tools-on-edit"
           }
         ]
       }
@@ -167,7 +148,5 @@
     "commit": "",
     "pr": ""
   },
-  "agentPushNotifEnabled": true,
-  "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true
+  "agentPushNotifEnabled": true
 }

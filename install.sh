@@ -17,21 +17,21 @@ Options:
   --check              Validate repo settings/hooks/commands without installing.
   --no-shell-wrapper   Install Headroom, but do not modify your shell rc to wrap `claude`.
   --no-caveman         Skip Caveman plugin install and omit it from merged settings.
-  --sonnet             Use `model: sonnet` and `effortLevel: high` instead of Opus/xhigh.
+  --opus               Use `model: opus` and `effortLevel: xhigh` instead of the Sonnet/xhigh default.
   -h, --help           Show this help.
 
 Examples:
   ./install.sh
   ./install.sh --no-shell-wrapper
-  ./install.sh --no-caveman --sonnet
-  ./install.sh --check --no-caveman --sonnet
+  ./install.sh --no-caveman --opus
+  ./install.sh --check --no-caveman --opus
 EOF
 }
 
 CHECK_ONLY=0
 INSTALL_CAVEMAN=1
 INSTALL_SHELL_WRAPPER=1
-MODEL_PROFILE="power"
+MODEL_PROFILE="sonnet"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,8 +47,8 @@ while [[ $# -gt 0 ]]; do
       INSTALL_CAVEMAN=0
       shift
       ;;
-    --sonnet)
-      MODEL_PROFILE="sonnet"
+    --opus)
+      MODEL_PROFILE="opus"
       shift
       ;;
     -h|--help)
@@ -80,8 +80,8 @@ prepare_settings_source() {
     filter="$filter | del(.enabledPlugins[\"caveman@caveman\"]) | del(.extraKnownMarketplaces.caveman)"
   fi
 
-  if [[ "$MODEL_PROFILE" == "sonnet" ]]; then
-    filter="$filter | .model = \"sonnet\" | .effortLevel = \"high\""
+  if [[ "$MODEL_PROFILE" == "opus" ]]; then
+    filter="$filter | .model = \"opus\" | .effortLevel = \"xhigh\""
   fi
 
   if [[ "$filter" != "." ]]; then
@@ -131,15 +131,8 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
     done < <(grep -oE 'mcp__plugin_[a-z0-9_-]+' "$f" 2>/dev/null | sort -u)
   done < <(find "$REPO_DIR/commands" -name '*.md' 2>/dev/null)
 
-  # 4. bin/ scripts referenced by hooks must exist
-  for script in sync-copilot.mjs sync-runner-tools.mjs; do
-    if grep -rqE "bin/$script" "$REPO_DIR/hooks/" 2>/dev/null; then
-      [[ -f "$REPO_DIR/bin/$script" ]] || { echo "FAIL: hooks reference bin/$script but $REPO_DIR/bin/$script missing"; fail=1; }
-    fi
-  done
-
   if [[ $fail -eq 0 ]]; then
-    echo "OK: all hooks, command plugin refs, and bin/ scripts resolve"
+    echo "OK: all hooks and command plugin refs resolve"
     exit 0
   fi
   exit 1
@@ -157,10 +150,10 @@ if [[ "$INSTALL_SHELL_WRAPPER" -eq 1 ]]; then
 else
   echo "Shell wrapper: skipped (--no-shell-wrapper)"
 fi
-if [[ "$MODEL_PROFILE" == "sonnet" ]]; then
-  echo "Model profile: sonnet/high (--sonnet)"
+if [[ "$MODEL_PROFILE" == "opus" ]]; then
+  echo "Model profile: opus/xhigh (--opus)"
 else
-  echo "Model profile: opus/xhigh"
+  echo "Model profile: sonnet/xhigh"
 fi
 echo ""
 
@@ -173,6 +166,7 @@ for cmd in git curl jq python3; do
 done
 if [[ -n "$missing" ]]; then
   echo "❌ Missing required tools:$missing"
+  echo "   Fedora: sudo dnf install -y$missing"
   echo "   macOS:  brew install$missing"
   echo "   Debian: sudo apt-get install -y$missing"
   echo "   Re-run install.sh once they are on PATH."
@@ -200,9 +194,32 @@ else
 fi
 
 # ── 2. Install codebase-memory-mcp ──
-# Releases ship as <name>-<os>-<arch>.tar.gz. We download, extract the binary,
-# and drop it in ~/.local/bin (caller is expected to have ~/.local/bin on PATH).
-echo "→ Installing codebase-memory-mcp..."
+# Releases ship as <name>-<os>-<arch>.tar.gz. We download, VERIFY the SHA-256
+# against a pinned value, extract the binary, and drop it in ~/.local/bin
+# (caller is expected to have ~/.local/bin on PATH).
+#
+# SECURITY: we pin to a specific tagged release (never `latest`) and verify the
+# tarball checksum before extracting/executing. This prevents a compromised or
+# retagged upstream release from silently shipping attacker code onto your box.
+#
+# To bump: pick a release tag at
+#   https://github.com/DeusData/codebase-memory-mcp/releases
+# then record its per-asset sha256 below. Get a hash with:
+#   curl -fsSL <asset-url> | sha256sum          # Linux
+#   curl -fsSL <asset-url> | shasum -a 256      # macOS
+CBM_VERSION="v0.0.0"   # TODO: pin to a real release tag before shipping
+# Expected sha256 of codebase-memory-mcp-<os>-<arch>.tar.gz per target.
+# (case lookup, not `declare -A`, so this stays portable to macOS bash 3.2.)
+cbm_expected_sha256() {
+  case "$1" in
+    darwin-arm64) echo "REPLACE_WITH_REAL_SHA256" ;;
+    darwin-amd64) echo "REPLACE_WITH_REAL_SHA256" ;;
+    linux-arm64)  echo "REPLACE_WITH_REAL_SHA256" ;;
+    linux-amd64)  echo "REPLACE_WITH_REAL_SHA256" ;;
+    *) echo "" ;;
+  esac
+}
+echo "→ Installing codebase-memory-mcp ($CBM_VERSION)..."
 CBM_OS=""
 CBM_ARCH=""
 case "$(uname)" in
@@ -215,33 +232,57 @@ case "$(uname -m)" in
   x86_64|amd64)   CBM_ARCH="amd64" ;;
   *) echo "  ⚠ Unsupported arch: $(uname -m). Skipping CBM install."; CBM_ARCH="" ;;
 esac
+
+# Portable sha256 helper: sha256sum (Linux) or `shasum -a 256` (macOS).
+cbm_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum   >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  else return 1; fi
+}
+
 if [[ -n "$CBM_OS" && -n "$CBM_ARCH" ]]; then
-  CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-${CBM_OS}-${CBM_ARCH}.tar.gz"
-  mkdir -p "$HOME/.local/bin"
-  CBM_TMP="$(mktemp -d)"
-  if curl -fsSL "$CBM_URL" -o "$CBM_TMP/cbm.tar.gz"; then
-    tar -xzf "$CBM_TMP/cbm.tar.gz" -C "$CBM_TMP"
-    if [[ -f "$CBM_TMP/codebase-memory-mcp" ]]; then
-      mv "$CBM_TMP/codebase-memory-mcp" "$HOME/.local/bin/codebase-memory-mcp"
-      chmod +x "$HOME/.local/bin/codebase-memory-mcp"
-      "$HOME/.local/bin/codebase-memory-mcp" setup claude-code 2>/dev/null || true
-      echo "  ✓ CBM installed at ~/.local/bin/codebase-memory-mcp"
-    else
-      echo "  ⚠ CBM tarball extracted but binary not found — open an issue at the repo"
-    fi
+  CBM_KEY="${CBM_OS}-${CBM_ARCH}"
+  CBM_EXPECTED="$(cbm_expected_sha256 "$CBM_KEY")"
+  CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/${CBM_VERSION}/codebase-memory-mcp-${CBM_KEY}.tar.gz"
+  if [[ -z "$CBM_EXPECTED" || "$CBM_EXPECTED" == REPLACE_WITH_REAL_SHA256 ]]; then
+    echo "  ⚠ No pinned sha256 for $CBM_KEY ($CBM_VERSION) — refusing to install unverified binary."
+    echo "    Fill in cbm_expected_sha256() for '$CBM_KEY' in install.sh, then re-run."
   else
-    echo "  ⚠ CBM download failed ($CBM_URL). Skip and run manually later."
+    mkdir -p "$HOME/.local/bin"
+    CBM_TMP="$(mktemp -d)"
+    if curl -fsSL "$CBM_URL" -o "$CBM_TMP/cbm.tar.gz"; then
+      CBM_ACTUAL="$(cbm_sha256 "$CBM_TMP/cbm.tar.gz" || echo "")"
+      if [[ -z "$CBM_ACTUAL" ]]; then
+        echo "  ⚠ Cannot compute sha256 (no sha256sum/shasum) — refusing unverified install."
+      elif [[ "$CBM_ACTUAL" != "$CBM_EXPECTED" ]]; then
+        echo "  ✗ CBM checksum MISMATCH — refusing to install."
+        echo "    expected: $CBM_EXPECTED"
+        echo "    actual:   $CBM_ACTUAL"
+        echo "    Either the pin is stale or the download was tampered with. Aborting CBM install."
+      else
+        tar -xzf "$CBM_TMP/cbm.tar.gz" -C "$CBM_TMP"
+        if [[ -f "$CBM_TMP/codebase-memory-mcp" ]]; then
+          mv "$CBM_TMP/codebase-memory-mcp" "$HOME/.local/bin/codebase-memory-mcp"
+          chmod +x "$HOME/.local/bin/codebase-memory-mcp"
+          "$HOME/.local/bin/codebase-memory-mcp" setup claude-code 2>/dev/null || true
+          echo "  ✓ CBM $CBM_VERSION installed at ~/.local/bin/codebase-memory-mcp (sha256 verified)"
+        else
+          echo "  ⚠ CBM tarball extracted but binary not found — open an issue at the repo"
+        fi
+      fi
+    else
+      echo "  ⚠ CBM download failed ($CBM_URL). Skip and run manually later."
+    fi
+    rm -rf "$CBM_TMP"
   fi
-  rm -rf "$CBM_TMP"
 fi
 
 # ── 3. Install Claude Code plugins (context-mode + optional caveman) ──
 # Plugin install (not raw `mcp add`) so context-mode tools resolve under
-# `mcp__plugin_context-mode_context-mode__*` — the namespace slash commands
-# (/e2e, /unleash) reference. Raw `mcp add` produces `mcp__context-mode__*`
-# which the slash commands cannot find. Caveman stays enabled by default for
-# the power-user profile, but --no-caveman keeps private style choices out of
-# the merged settings.
+# `mcp__plugin_context-mode_context-mode__*` — the namespace the context-mode
+# hooks expect. Raw `mcp add` produces `mcp__context-mode__*` instead. Caveman
+# stays enabled by default for the power-user profile, but --no-caveman keeps
+# private style choices out of the merged settings.
 if [[ "$INSTALL_CAVEMAN" -eq 1 ]]; then
   echo "→ Installing Claude Code plugins (context-mode, caveman)..."
 else
@@ -376,7 +417,7 @@ inject_claude_md() {
 # merge_settings_json: deep jq merge. Preserves user model/effortLevel/
 # permissions/custom env by default. Replaces hooks structure (we own it).
 # Unions enabledPlugins + extraKnownMarketplaces, with explicit CLI flags allowed
-# to remove Caveman or force the sonnet/high model profile.
+# to remove Caveman or force the opus/xhigh model profile.
 # Falls back to plain copy if jq fails.
 merge_settings_json() {
   local target="$HOME/.claude/settings.json"
@@ -415,8 +456,8 @@ merge_settings_json() {
     | if $skipCaveman then
         del(.enabledPlugins["caveman@caveman"]) | del(.extraKnownMarketplaces.caveman)
       else . end
-    | if $modelProfile == "sonnet" then
-        .model = "sonnet" | .effortLevel = "high"
+    | if $modelProfile == "opus" then
+        .model = "opus" | .effortLevel = "xhigh"
       else . end
   ' "$source" "$target" > "$target.tmp" 2>/dev/null; then
     # Canonicalize both via jq -S for stable comparison (jq's `*` operator
@@ -427,8 +468,8 @@ merge_settings_json() {
     else
       cp "$target" "$target.bak.$backup_suffix"
       mv "$target.tmp" "$target"
-      if [[ "$MODEL_PROFILE" == "sonnet" ]]; then
-        echo "  ✓ settings.json merged (sonnet/high forced by --sonnet; permissions preserved)"
+      if [[ "$MODEL_PROFILE" == "opus" ]]; then
+        echo "  ✓ settings.json merged (opus/xhigh forced by --opus; permissions preserved)"
       else
         echo "  ✓ settings.json merged (your model/effortLevel/permissions preserved if set)"
       fi
@@ -441,9 +482,9 @@ merge_settings_json() {
   fi
 }
 
-# ── 5. Copy hooks, commands, rules, bin (per-file backup on conflict) ──
-echo "→ Copying hooks, commands, rules, bin (backups for changed files)..."
-mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/commands" "$HOME/.claude/rules" "$HOME/.claude/bin"
+# ── 5. Copy hooks, commands, rules (per-file backup on conflict) ──
+echo "→ Copying hooks, commands, rules (backups for changed files)..."
+mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/commands" "$HOME/.claude/rules"
 for src in "$REPO_DIR/hooks/"*; do
   [[ -f "$src" ]] && cp_with_backup "$src" "$HOME/.claude/hooks/$(basename "$src")"
 done
@@ -454,12 +495,7 @@ for src in "$REPO_DIR/rules/"*.md; do
   [[ -f "$src" ]] || continue
   cp_with_backup "$src" "$HOME/.claude/rules/$(basename "$src")"
 done
-if [[ -d "$REPO_DIR/bin" ]]; then
-  for src in "$REPO_DIR/bin/"*; do
-    [[ -f "$src" ]] && cp_with_backup "$src" "$HOME/.claude/bin/$(basename "$src")"
-  done
-fi
-chmod +x "$HOME/.claude/hooks/"* "$HOME/.claude/bin/"*.mjs 2>/dev/null || true
+chmod +x "$HOME/.claude/hooks/"* 2>/dev/null || true
 
 # ── 6. Statusline ──
 echo "→ Installing statusline..."
@@ -574,15 +610,12 @@ else
   echo "  - Caveman plugin skipped (--no-caveman)"
 fi
 echo "  ✓ All enforcement hooks from repo hooks/"
-echo "  ✓ All slash commands from repo commands/"
-echo "  ✓ Private agent definitions left untouched in ~/.claude/agents/"
 echo "  ✓ Stack rules dir created at ~/.claude/rules/ (empty by design — drop your own per rules/README.md)"
-echo "  ✓ bin/ helper scripts (sync-copilot, sync-runner-tools)"
 echo "  ✓ Custom statusline"
-if [[ "$MODEL_PROFILE" == "sonnet" ]]; then
-  echo "  ✓ Optimized settings.json (sonnet/high profile)"
-else
+if [[ "$MODEL_PROFILE" == "opus" ]]; then
   echo "  ✓ Optimized settings.json (opus/xhigh power profile)"
+else
+  echo "  ✓ Optimized settings.json (sonnet/xhigh profile)"
 fi
 if [[ -n "$SHELL_INSTALLED" ]]; then
   echo "  ✓ Shell wrapper: $SHELL_INSTALLED"

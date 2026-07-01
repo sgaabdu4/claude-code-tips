@@ -12,9 +12,9 @@
 - **Per-stack rule files** in `~/.claude/rules/<stack>.md`: skill gate + numbered self-check. Repo ships an empty `rules/` with [`README.md`](https://github.com/sgaabdu4/claude-code-tips/blob/main/rules/README.md). Drop in your own. Mine stay private since they only match my stacks; examples are further down.
 - **CLI over MCP** for Tavily/Appwrite: same power, way less context
 - **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks
-- **PostToolUse reject scanners**: ESLint custom rule · node regex scanner · Dart analyzer plugin · Husky + lint-staged
-- **Settings:** `model: claude-opus-4-7`, `effortLevel: xhigh`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50`, `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6`
-- **Multi-model pipeline:** Opus 4.7 plan (or `/ultraplan`) → Opus implement → `/unleash` swarm → cross-vendor review (I use Codex GPT-5.5, any intelligent model works) → same for E2E (Agent Browser dogfood for web, Dart MCP for Flutter)
+- **PostToolUse reject scanners**: ESLint custom rule · node regex scanner · Husky + lint-staged
+- **Settings:** `model: sonnet`, `effortLevel: xhigh`, `advisorModel: opus`, `ENABLE_PROMPT_CACHING_1H=1`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50`
+- **Multi-model pipeline:** Opus plan (or `/ultraplan`) → implement → parallel review round → cross-vendor review (I use Codex GPT-5.5, any intelligent model works) → same for E2E (Agent Browser dogfood for web)
 - **Measure savings** with [Codeburn](https://github.com/getagentseal/codeburn) · dictate with Fluid Voice (Parakeet)
 
 ---
@@ -124,7 +124,7 @@ Sessions extend from ~30 minutes to ~3 hours on the same 200K context window.
 
 ### How I integrate it
 
-Install as a plugin so its tools land under `mcp__plugin_context-mode_context-mode__*` (the namespace `/e2e`, `/unleash`, and other slash commands reference):
+Install as a plugin so its tools land under `mcp__plugin_context-mode_context-mode__*` (the namespace the context-mode hooks expect):
 
 Install via `claude plugin marketplace add mksglu/context-mode` then `claude plugin install context-mode@context-mode` (the [install.sh](https://github.com/sgaabdu4/claude-code-tips/blob/main/install.sh) does this for you). One hook per lifecycle event (`PreToolUse`/`PostToolUse`/`PreCompact`/`SessionStart`), each calling `context-mode hook claude-code <event>`. See [`settings/settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json).
 
@@ -212,25 +212,25 @@ Fix: a Bash PreToolUse hook that blocks the raw commands (`cat`/`head`/`tail`/`f
 Full file: [`settings/settings.json`](https://github.com/sgaabdu4/claude-code-tips/blob/main/settings/settings.json). Top-level shape:
 
 - **`env`**: 8 framework keys (covered below).
-- **`permissions.defaultMode: auto`**: fewer permission prompts mid-flow.
-- **`model: claude-opus-4-7`** + **`effortLevel: xhigh`** + **`advisorModel: opus`**: primary model, reasoning budget, advisor escalation target.
+- **`permissions.defaultMode: default`**: keep Claude Code's permission prompts (safer default; flip to `acceptEdits`/`auto` yourself if you want fewer prompts).
+- **`model: sonnet`** + **`effortLevel: xhigh`** + **`advisorModel: opus`**: primary model, reasoning budget, advisor escalation target. (`./install.sh --opus` swaps the primary to Opus.)
 - **`statusLine`**: points at `statusline-command.sh`.
 - **`enabledPlugins`**: `caveman@caveman`, `context-mode@context-mode` (each with a matching `extraKnownMarketplaces` entry).
 - **`hooks`**: one entry per lifecycle event.
-    - `PreToolUse`: Bash routes through `context-mode` + `bash-ban-raw-tools` + `flutter-ctx-redirect` + `rtk`; `Grep|Glob|Read|Search` routes through `cbm-code-discovery-gate`.
-    - `PostToolUse`: `context-mode` + `cbm-mcp-marker`; `Edit|Write|MultiEdit` fires the sync hooks.
+    - `PreToolUse`: Bash routes through `context-mode` + `bash-ban-raw-tools` + `rtk`; `Grep|Glob|Read|Search` routes through `cbm-code-discovery-gate`.
+    - `PostToolUse`: `context-mode` + `cbm-mcp-marker`.
     - `PreCompact`: `context-mode`.
     - `SessionStart`: matcherless `context-mode` + `memory-repo-symlink` + `cbm-session-reminder`, plus `startup`/`resume`/`clear`/`compact` matchers each running `cbm-session-reminder`.
 
 ### What each env var does
 
-Headliners. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` fires compaction at 50% of the context window instead of the default 95%, keeping long sessions off the ceiling. `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6` pins delegated subagents to Sonnet 4.6 (60% cheaper than Opus, plenty smart for research, refactor, audit). `ENABLE_PROMPT_CACHING_1H=1` stretches the prompt cache TTL from 5 minutes to 1 hour, a serious cost saver on long sessions. Full table:
+Headliners. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` fires compaction at 50% of the context window instead of the default 95%, keeping long sessions off the ceiling. `ENABLE_PROMPT_CACHING_1H=1` stretches the prompt cache TTL from 5 minutes to 1 hour, a serious cost saver on long sessions. Full table:
 
 https://gist.github.com/sgaabdu4/f352f61e23f41f331c7d5a5985bc9604
 
 ### Other settings explained
 
-`effortLevel: xhigh` keeps Opus 4.7 reasoning unlocked (it's also the 4.7 default; drop to `medium` when you're cost-sensitive). `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions. Subagents inherit `claude-sonnet-4-6` from the env var by default. Override per-agent with `model: claude-opus-4-7` in `~/.claude/agents/<name>.md` frontmatter when the stakes are high (refactor, multi-file impact, audit). Full table:
+`effortLevel: xhigh` keeps Opus 4.7 reasoning unlocked (it's also the 4.7 default; drop to `medium` when you're cost-sensitive). `advisorModel: opus` routes the built-in advisor tool to the strongest model for second opinions. Full table:
 
 https://gist.github.com/sgaabdu4/9ef5dd71813217c695ee5f5944c49680
 
@@ -243,27 +243,19 @@ Your CLAUDE.md is instructions for *in-session* behavior. Don't document externa
 Full file: [`CLAUDE.md.example`](https://github.com/sgaabdu4/claude-code-tips/blob/main/CLAUDE.md.example). Sections it covers:
 
 - **Principles**: DRY/KISS/YAGNI/SSOT, read code first, fail→change approach, ask before destructive.
-- **Implementation Flow**: 10-step ordered routine Claude must run for every implementation task (Index → Skill gate → Clarify → Explore via CBM → Plan → Delegate? → Ripple → TDD → Verify → Advisor). Skip a step, STOP, restart from skipped.
+- **Implementation Flow**: 9-step ordered routine Claude must run for every implementation task (Index → Skill gate → Clarify → Explore via CBM → Plan → Ripple → TDD → Verify → Advisor). Skip a step, STOP, restart from skipped.
 - **Skill gates**: pattern for routing stack files at the per-stack skill (stack rule loads first, no skip).
 - **Ripple check**: any add/change/remove must `trace_path` ALL call sites. Never trust "only used here".
 - **TDD**: red/green/refactor with explicit edge-case list (empty/null/boundary/concurrency/tz/unicode/overflow/permission/network/partial).
 - **Tools Quickref**: single-table mapping of intent to tool (`search_graph` for find-def, `trace_path` for flow, `ctx_execute` for run, `ctx_fetch_and_index` for URLs, etc.).
 - **Banned Bash**: `cat`/`head`/`tail`/`grep`/`find` are blocked. Use Read/Grep/Glob tools instead.
-- **Subagents**: when to delegate (MANDATORY for research, refactor >2 files, audit, multi-file impact), parallel cap 3, frontmatter fields (`permissionMode: plan` for read-only audit agents, `isolation: worktree`, `model: claude-opus-4-7`, `effort: xhigh`).
 - **Reply style**: min tokens, answer first, no filler, no preamble, no recap.
 
 ### Per-language rule files
 
 I also use `.claude/rules/` for stack-specific enforcement. Loaded via `@` import from `CLAUDE.md`. One file per stack. Skill to invoke first, numbered self-check of the handful of footguns Claude repeatedly trips on. Build the list from actual failures you've seen.
 
-**The repo ships `rules/` empty.** Just [`rules/README.md`](https://github.com/sgaabdu4/claude-code-tips/blob/main/rules/README.md) as a template. Listing my flutter/react/appwrite rules in the install would either pollute your context with stuff you don't ship, or imply they apply when they don't. The three I run (shown below as article examples, not shipped as files):
-
-#### Flutter
-- Scope: `**/*.dart`, `**/pubspec.yaml`, `**/analysis_options.yaml`.
-- Invoke `building-flutter-apps` skill FIRST.
-- `if (!ref.mounted) return;` after every `await` in a notifier. `if (!context.mounted) return;` after every `await` in a widget/State. Never bare `mounted`; the lint fires. Extract a sync helper on State with `this.context`.
-- No `_buildXxx()`. Extract widget classes. No hardcoded strings. Use `*Strings` constants.
-- `ref.watch` in build, `ref.read` in callbacks. Riverpod 3.x codegen naming: `FooNotifier` → `fooProvider`. No `shrinkWrap: true` on `ListView`/`GridView`.
+**The repo ships `rules/` empty.** Just [`rules/README.md`](https://github.com/sgaabdu4/claude-code-tips/blob/main/rules/README.md) as a template. Listing my react/appwrite rules in the install would either pollute your context with stuff you don't ship, or imply they apply when they don't. The two I run (shown below as article examples, not shipped as files):
 
 #### React/Next
 - Scope: `**/*.tsx`, `**/*.jsx`, `**/*.ts`, `**/next.config.*`, `**/package.json`.
@@ -277,23 +269,11 @@ I also use `.claude/rules/` for stack-specific enforcement. Loaded via `@` impor
 - Invoke `appwrite-backend` skill FIRST.
 - Backend compliance agent must: grep all `Query.select([...])` calls, extract field names, fetch live schema via Appwrite CLI (`appwrite databases list-attributes --database-id <id> --table-id <id>`), flag selected fields not in collection attrs, flag missing indexes on queried fields.
 
-Copy the **structure**, not the content. Each rule opens with `Invoke <skill> FIRST`. That's the load-bearing line. Swap in your own stacks. The point is one skill-gated rule file per framework you actually ship, not these specific three.
+Copy the **structure**, not the content. Each rule opens with `Invoke <skill> FIRST`. That's the load-bearing line. Swap in your own stacks. The point is one skill-gated rule file per framework you actually ship, not these specific two.
 
 ### Additional hooks
 
-Four more hooks live in the production config. `flutter-ctx-redirect` (PreToolUse Bash) pipes Flutter/Dart tool output through context-mode. `memory-repo-symlink` (SessionStart) scopes agent memory to the current project. `sync-copilot-on-edit` and `sync-runner-tools-on-edit` (both PostToolUse Edit|Write|MultiEdit) mirror slash commands into VS Code Copilot prompts and rewrite e2e runner tool-allowlists after each edit. The pair also works around subagent MCP inheritance bug [#30280](https://github.com/anthropics/claude-code/issues/30280).
-
-### Slash commands
-
-Beyond the core hooks: `/unleash` spawns the full agent review swarm in parallel (lint, types, security, perf, DB-schema, UX, reuse). `/e2e` runs the end-to-end suite via the stack-appropriate runner agent. `/e2e-auto` does the same with auto-detected project type.
-
-### The 21-agent ecosystem
-
-`~/.claude/agents/` holds 21 specialists in four categories: **stack auditors** (react, flutter, appwrite, web-ui), **role agents** (api-designer, security, perf, devops, ux, edge-case-hunter, reuse, user-flow, qa, junior-dev, naive-tester), **meta** (staff-engineer, general-purpose, Plan, Explore), **e2e runners** (web, flutter). Each declares `skills:`, `model:`, `permissionMode:`, and `isolation:` in its own frontmatter.
-
-### Codegen pipeline
-
-`bin/sync-copilot.mjs` symlinks `~/.claude/commands/*.md` into VS Code prompt directories as `*.prompt.md` after each command edit (triggered by `sync-copilot-on-edit`). `bin/sync-runner-tools.mjs` rewrites runner agent tool-allowlists to match the current MCP inventory (`sync-runner-tools-on-edit`). Both are idempotent; run the installed copies manually from `~/.claude/bin/` to force a full resync.
+One more hook lives in the production config: `memory-repo-symlink` (SessionStart) scopes agent memory to the current project.
 
 ---
 
@@ -324,7 +304,7 @@ git clone https://github.com/sgaabdu4/claude-code-tips.git
 cd claude-code-tips && chmod +x install.sh && ./install.sh
 ```
 
-The installer is opinionated and ships a power-user default. It drops in Headroom (which bundles RTK), codebase-memory-mcp, the context-mode plugin, the Caveman plugin, every hook, the slash commands, stack rule templates, `bin/` helpers, statusline, `settings.json`, and shell wrappers (fish/bash/zsh). It will not ship or overwrite private subagent definitions in `~/.claude/agents/`. Your existing `~/.claude/settings.json` is backed up before anything is written.
+The installer is opinionated and ships a power-user default. It drops in Headroom (which bundles RTK), codebase-memory-mcp, the context-mode plugin, the Caveman plugin, every hook, stack rule templates, statusline, `settings.json`, and shell wrappers (fish/bash/zsh). Your existing `~/.claude/settings.json` is backed up before anything is written.
 
 Escape hatches:
 
@@ -343,17 +323,17 @@ With 3h sessions instead of 30min, multi-model pipelines stop hitting limits. Mi
 
 1. **Plan**: Claude Opus 4.7, or `/ultraplan` to offload the plan to a cloud session while I keep working locally.
 2. **Implement**: Claude Opus 4.7.
-3. **Review round 1**: `/unleash` subagent swarm in parallel: lint, types, security, perf, DB-schema check.
+3. **Review round 1**: a parallel review pass — lint, types, security, perf, DB-schema check.
 4. **Review round 2**: a different intelligent model for a cross-model second opinion. I use Codex (GPT-5.5) because the vendor switch catches blind spots a same-family reviewer misses, but another Claude or Gemini works fine.
-5. **E2E**: same principle: any strong model driving a browser. Codex + VS Code integrated browser works; so does Claude via [Agent Browser's `dogfood` skill](https://github.com/vercel-labs/agent-browser) (clicks every button, tests forms with edge cases, **records video when it finds a potential bug**). For Flutter, the official [Dart MCP](https://docs.flutter.dev/tools/mcp) + Flutter Driver lets the LLM drive real devices end-to-end.
+5. **E2E**: same principle: any strong model driving a browser. Codex + VS Code integrated browser works; so does Claude via [Agent Browser's `dogfood` skill](https://github.com/vercel-labs/agent-browser) (clicks every button, tests forms with edge cases, **records video when it finds a potential bug**).
 
-**Model choice, honestly:** swap them out and you'd barely notice. Opus 4.7 high+ for plan and implement is what I run. Any GPT-5.3+ Codex (high/xHigh) or same-class Claude covers review and E2E. Cross-vendor review catches more than same-vendor review. The only floor is "intelligent enough." Don't review Opus output with Haiku. For background subagents (research, audit, refactor) Sonnet 4.6 via `CLAUDE_CODE_SUBAGENT_MODEL` is the sweet spot. 60% cheaper than Opus, plenty smart, with per-agent Opus override for high-stakes work.
+**Model choice, honestly:** swap them out and you'd barely notice. Opus 4.7 high+ for plan and implement is what I run. Any GPT-5.3+ Codex (high/xHigh) or same-class Claude covers review and E2E. Cross-vendor review catches more than same-vendor review. The only floor is "intelligent enough." Don't review Opus output with Haiku.
 
 Tavily stays hot in the session for live research. Never trust training data for docs, signatures, or versions.
 
 Other things that moved the needle:
 
-- **Reject scanners on PostToolUse hooks**: every edit triggers a structural-standards scan. Any hit goes straight back to Claude so it fixes before moving on. Concrete stack: a [custom ESLint rule](https://eslint.org/docs/latest/extend/custom-rules) for TS/JS, a node regex scanner for domain UI patterns, a [Dart analyzer plugin](https://dart.dev/tools/analyzer-plugins) wired through `analysis_options.yaml` for Dart, all gated pre-commit by [Husky](https://github.com/typicode/husky) + [lint-staged](https://github.com/lint-staged/lint-staged).
+- **Reject scanners on PostToolUse hooks**: every edit triggers a structural-standards scan. Any hit goes straight back to Claude so it fixes before moving on. Concrete stack: a [custom ESLint rule](https://eslint.org/docs/latest/extend/custom-rules) for TS/JS, a node regex scanner for domain UI patterns, all gated pre-commit by [Husky](https://github.com/typicode/husky) + [lint-staged](https://github.com/lint-staged/lint-staged).
 - **CLI over MCP**: ripped out Tavily + Appwrite MCP servers in favour of their CLIs (`tvly`, `appwrite`). Paired with context-mode, same power, way less context bloat.
 - **Only 2 MCP servers:** `codebase-memory-mcp` + `context-mode`. Everything else is CLI or hooks.
 - **Fluid Voice** for dictation (Parakeet/Nvidia under the hood): beats stock dictation because it AI-edits as you speak.

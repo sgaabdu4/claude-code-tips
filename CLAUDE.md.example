@@ -11,13 +11,10 @@ Every impl task. Skip step → STOP, restart from skipped.
 3. **Clarify** — ambiguous? `AskUserQuestion`. No guess.
 4. **Explore** — CBM: `get_architecture` → `search_graph` → `get_code_snippet`. Never grep→read→grep.
 5. **Plan** — non-trivial? `EnterPlanMode`. State approach + files + trade-offs.
-6. **Delegate?** — match MANDATORY criteria (`## Subagents`)? Spawn subagent self-contained prompt. Subagent run §1–10 self. Parallel cap 3. Inline only if 1-file edit / single grep / known path.
-7. **Ripple** — changed symbol → `trace_path` inbound ALL call sites. Update every.
-8. **TDD** — red → min code → green → refactor. Happy+fail+edge.
-9. **Verify** — lint + typecheck + tests PASS. Fail → fix root cause, no skip.
-10. **Advisor** — big task → `advisor()` before done.
-
-Subagents inherit nothing auto. Your `.md` must declare `skills:` frontmatter + reference flow.
+6. **Ripple** — changed symbol → `trace_path` inbound ALL call sites. Update every.
+7. **TDD** — red → min code → green → refactor. Happy+fail+edge.
+8. **Verify** — lint + typecheck + tests PASS. Fail → fix root cause, no skip.
+9. **Advisor** — big task → `advisor()` before done.
 
 ## Skill gates
 Pattern: file from stack X touched → invoke skill X FIRST. No skip.
@@ -64,17 +61,6 @@ CBM + context-mode.
 | Read log/big file | `ctx_execute_file` |
 | Fetch URL | `ctx_fetch_and_index` → `ctx_search` |
 | Recall prior | `ctx_search` |
-
-## Subagents
-Delegate default. Main = coordinator.
-- **MANDATORY delegate**: online research (tvly/ctx_fetch_and_index), refactor >2 files, summarize >1 file, audit, explore unknown repo, multi-file impact, big log triage.
-- **Skip**: 1-file read, 1-grep, single-known-path edit. Inline.
-- **Parallel cap**: 3 concurrent. Serial if dependent.
-- **Type**: `general-purpose` (edits), `Plan` (read-only arch), `Explore` (read-only nav).
-- **Prompt**: self-contained, <500 tok. Goal + context + constraint + return format.
-- **Return**: "report <200 words".
-- **Model**: default sonnet via env. Override `model: claude-opus-4-7` for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
-- Big task → advisor after.
 
 ## Writing
 Active voice. Concrete. No puffery (robust/seamless/leverage/delve/pivotal/groundbreaking/multifaceted/foster/tapestry). Mermaid when diagram > prose.

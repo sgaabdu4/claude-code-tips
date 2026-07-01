@@ -4,7 +4,7 @@ Files in `~/.claude/rules/<stack>.md` are skill-gated checklists Claude reads be
 
 A **skill** is a Markdown file at `~/.claude/skills/<name>/SKILL.md` (or installed by a plugin under `~/.claude/plugins/cache/<plugin>/<plugin>/<hash>/skills/<name>/`). To discover what's available, browse `~/.claude/skills/` directly (`ls ~/.claude/skills`) or ask Claude "find a skill for X" — that auto-triggers the `find-skills` skill. The skill name in your rule must match a real skill name exactly; a typo or missing skill = the `Invoke` line does nothing, but the numbered self-check below still fires. So if no skill matches your stack, the rule still earns its keep — just keep the checklist focused.
 
-The repo ships **empty** (just this README). Stack rules are project-specific — flutter rules look nothing like react rules. Listing mine in the install would either pollute your context with stuff you don't ship, or imply they apply when they don't.
+The repo ships **empty** (just this README). Stack rules are project-specific — backend rules look nothing like react rules. Listing mine in the install would either pollute your context with stuff you don't ship, or imply they apply when they don't.
 
 ## Quick start — fork this template
 

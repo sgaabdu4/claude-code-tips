@@ -163,5 +163,89 @@ else
 fi
 
 echo
+echo "=== cleanup-rtk-artifacts ==="
+
+CLEANUP="$REPO_DIR/bin/cleanup-rtk-artifacts.sh"
+CHOME="$SANDBOX/cleanup-home"
+CBIN="$CHOME/bin"
+mkdir -p "$CBIN" "$CHOME/.claude/hooks"
+
+# The exact leftover Headroom's removal produces: a symlink to a binary that is
+# no longer there. Present in $PATH, ENOENT on execve.
+ln -sf "$CHOME/gone/rtk" "$CBIN/rtk"
+
+out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+if grep -q "dangling: $CBIN/rtk" <<<"$out"; then
+  ok "reports a dangling rtk symlink"
+else
+  bad "reports a dangling rtk symlink" "not in output: $out"
+fi
+check "default run does not delete anything" "yes" "$([[ -L "$CBIN/rtk" ]] && echo yes || echo no)"
+
+out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply 2>&1)
+check "--apply removes the dangling symlink" "no" "$([[ -e "$CBIN/rtk" || -L "$CBIN/rtk" ]] && echo yes || echo no)"
+
+# A working rtk must survive both modes.
+make_stub "$CBIN" rtk
+env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply >/dev/null 2>&1
+check "--apply leaves a working rtk alone" "yes" "$([[ -x "$CBIN/rtk" ]] && echo yes || echo no)"
+
+# Headroom's generated wrapper is only orphaned once rtk is gone for good.
+touch "$CHOME/.claude/hooks/rtk-rewrite.sh"
+out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+if grep -q "leaving it alone" <<<"$out"; then
+  ok "keeps rtk-rewrite.sh while rtk still resolves"
+else
+  bad "keeps rtk-rewrite.sh while rtk still resolves" "output: $out"
+fi
+
+# The "rtk is gone for good" branch can't be reached on a host that has rtk in
+# /opt/homebrew/bin, since the shim probes absolute paths by design. Drive it
+# through a repo copy whose shim reports rtk as unresolvable.
+rm -f "$CBIN/rtk"
+CLEAN_REPO="$SANDBOX/cleanup-repo"
+mkdir -p "$CLEAN_REPO/hooks" "$CLEAN_REPO/bin"
+cp "$CLEANUP" "$CLEAN_REPO/bin/"
+printf '#!/bin/bash\nexit 1\n' > "$CLEAN_REPO/hooks/run-cli-hook"
+chmod +x "$CLEAN_REPO/hooks/run-cli-hook"
+env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEAN_REPO/bin/cleanup-rtk-artifacts.sh" --apply >/dev/null 2>&1
+check "--apply removes rtk-rewrite.sh once rtk is gone" "no" \
+      "$([[ -f "$CHOME/.claude/hooks/rtk-rewrite.sh" ]] && echo yes || echo no)"
+
+# A settings.json still calling rtk directly is the original bug; flag it.
+cat > "$CHOME/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"rtk hook claude"}]}]}}
+JSON
+out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+if grep -q 'bypass the shim' <<<"$out"; then
+  ok "flags a settings.json hook that calls rtk directly"
+else
+  bad "flags a settings.json hook that calls rtk directly" "output: $out"
+fi
+
+# ...and must not flag the shimmed form we ship.
+cat > "$CHOME/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"~/.claude/hooks/run-cli-hook rtk hook claude"}]}]}}
+JSON
+out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+if grep -q 'bypass the shim' <<<"$out"; then
+  bad "does not flag the shimmed hook form" "false positive: $out"
+else
+  ok "does not flag the shimmed hook form"
+fi
+
+# install.sh must install rtk itself now that Headroom no longer ships it.
+if grep -q 'brew install rtk' "$REPO_DIR/install.sh"; then
+  ok "install.sh installs rtk independently of Headroom"
+else
+  bad "install.sh installs rtk independently of Headroom" "no rtk install step found"
+fi
+if grep -qi 'bundle[sd]* RTK\|bundled in Headroom' "$REPO_DIR/install.sh" "$REPO_DIR/README.md"; then
+  bad "no stale 'Headroom bundles RTK' claim" "$(grep -in 'bundle' "$REPO_DIR/install.sh" "$REPO_DIR/README.md")"
+else
+  ok "no stale 'Headroom bundles RTK' claim"
+fi
+
+echo
 echo "passed: $pass  failed: $fail"
 [[ $fail -eq 0 ]]

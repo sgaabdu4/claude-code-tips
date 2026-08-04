@@ -9,7 +9,7 @@ Usage:
   ./install.sh [options]
 
 Power-user default:
-  Installs Headroom + RTK, CBM, context-mode, Caveman, hooks, commands,
+  Installs Headroom, RTK, CBM, context-mode, Caveman, hooks, commands,
   statusline, settings, and the shell wrapper that runs `claude` through
   Headroom.
 
@@ -205,7 +205,10 @@ fi
 
 prepare_settings_source
 
-# ── 1. Install Headroom (includes RTK) ──
+# ── 1. Install Headroom ──
+# Headroom used to vendor RTK; headroomlabs-ai/headroom#2677 (merged 2026-07-31)
+# removed it with no replacement and no cleanup path. RTK is installed on its
+# own below.
 # `--user` keeps us off the system Python and dodges PEP 668
 # "externally-managed-environment" errors on Homebrew Python 3.11+ /
 # Debian-flavour distros. Falls back to plain pip if --user is unsupported
@@ -221,6 +224,21 @@ if [[ -n "$HR_CMD" ]]; then
     || echo "  ⚠ pip install failed. Run manually: $HR_CMD install --user 'headroom-ai[all]'"
 else
   echo "  ⚠ pip / pip3 not found — install Python 3 + pip, then run: pip install --user 'headroom-ai[all]'"
+fi
+
+# ── 1b. Install RTK ──
+# Resolve it the way a hook does first, so an existing copy (Homebrew, cargo,
+# a leftover ~/.headroom/bin one) is reused instead of installing a second
+# binary that shadows it.
+echo "→ Installing RTK..."
+if existing_rtk=$("$REPO_DIR/hooks/run-cli-hook" --which rtk 2>/dev/null); then
+  echo "  ✓ rtk already resolves → $existing_rtk"
+elif command -v brew >/dev/null 2>&1; then
+  brew install rtk 2>/dev/null \
+    || echo "  ⚠ brew install rtk failed. Run manually: brew install rtk"
+else
+  curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh \
+    || echo "  ⚠ rtk install script failed. See https://github.com/rtk-ai/rtk"
 fi
 
 # ── 2. Install codebase-memory-mcp ──
@@ -608,7 +626,8 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "What was installed:"
-echo "  ✓ Headroom (API-layer compression, bundles RTK)"
+echo "  ✓ Headroom (API-layer compression)"
+echo "  ✓ RTK (shell-command compression, installed independently of Headroom)"
 echo "  ✓ codebase-memory-mcp (knowledge graph for code)"
 echo "  ✓ context-mode plugin (output virtualization)"
 if [[ "$INSTALL_CAVEMAN" -eq 1 ]]; then
@@ -653,4 +672,4 @@ echo "  Headroom:  https://github.com/headroomlabs-ai/headroom"
 echo "  CBM:       https://github.com/DeusData/codebase-memory-mcp"
 echo "  ctx-mode:  https://github.com/mksglu/context-mode"
 echo "  Caveman:   https://github.com/JuliusBrussee/caveman"
-echo "  RTK:       https://github.com/rtk-ai/rtk (bundled in Headroom)"
+echo "  RTK:       https://github.com/rtk-ai/rtk"

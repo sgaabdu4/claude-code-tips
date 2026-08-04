@@ -15,20 +15,20 @@ git clone https://github.com/sgaabdu4/claude-code-tips.git
 cd claude-code-tips && chmod +x install.sh && ./install.sh
 ```
 
-Sanity-checks `git`/`curl`/`jq`/`python3` upfront. Installs Headroom (`pip install --user`), CBM binary, context-mode + Caveman plugins via `claude plugin install`, hooks, slash commands, statusline, settings, shell wrapper for your `$SHELL`. **Idempotent** — re-run anytime.
+Sanity-checks `git`/`curl`/`jq`/`python3` upfront. Installs Headroom (`pip install --user`), RTK (Homebrew, or the rtk-ai install script), CBM binary, context-mode + Caveman plugins via `claude plugin install`, hooks, slash commands, statusline, settings, shell wrapper for your `$SHELL`. **Idempotent** — re-run anytime.
 
 ### Power-user flags
 
 Default stays maximal. These flags narrow blast radius without editing the script:
 
 ```bash
-./install.sh --no-shell-wrapper   # install Headroom/RTK, but do not alias claude
+./install.sh --no-shell-wrapper   # install Headroom + RTK, but do not alias claude
 ./install.sh --no-caveman         # skip Caveman plugin + omit it from settings
 ./install.sh --sonnet             # use model: sonnet + effortLevel: high
 ./install.sh --check              # validate repo wiring only
 ```
 
-`--no-shell-wrapper` is the safer alternative to skipping Headroom entirely: this stack relies on Headroom to provide RTK, so the flag keeps the binary installed while making API-layer compression an explicit `headroom wrap claude -- <claude args>` launch choice.
+`--no-shell-wrapper` is the safer alternative to skipping Headroom entirely: it keeps the binary installed while making API-layer compression an explicit `headroom wrap claude -- <claude args>` launch choice. RTK is unaffected either way — it is a separate tool with its own install, and the hooks call it directly.
 
 ### Existing setup? Don't worry
 
@@ -62,7 +62,7 @@ It also resolves the **CLI each hook actually runs** (`rtk`, `context-mode`) the
 | [`tests/`](./tests/) | Sandboxed tests (throwaway `$HOME`, never touches your real `~/.claude`) |
 | [`commands/`](./commands/) | Slash commands (`/e2e`, `/e2e-auto`, `/unleash`, `/ship`) |
 | [`rules/`](./rules/) | **Empty by design** — your stack-specific rules. See [`rules/README.md`](./rules/README.md) for the template |
-| [`bin/`](./bin/) | Helper scripts (`sync-copilot.mjs`, `sync-runner-tools.mjs`) referenced by hooks |
+| [`bin/`](./bin/) | Helper scripts (`sync-copilot.mjs`, `sync-runner-tools.mjs`) referenced by hooks, plus `cleanup-rtk-artifacts.sh` |
 | [`statusline/statusline-command.sh`](./statusline/statusline-command.sh) | Statusline — user, branch, model, ctx%, 5h/7d usage |
 
 Subagent definitions are private by design. The commands can call local agents from `~/.claude/agents/`, but this repo does not ship or overwrite them.
@@ -96,17 +96,29 @@ Failed with non-blocking status code: [rtk: No such file or directory (os error 
 export CCT_RTK_BIN="$HOME/.headroom/bin/rtk"
 ```
 
-Same pattern for any shimmed CLI — `CCT_CONTEXT_MODE_BIN`, etc.
+Same pattern for any shimmed CLI: `CCT_CONTEXT_MODE_BIN`, and so on.
+
+### Leftovers from an older Headroom install
+
+Headroom's removal of RTK can leave a `rtk` symlink pointing at a binary that no longer exists. It still appears in `$PATH`, but `execve` on it returns ENOENT, which is the same error above with a different cause. To find those:
+
+```bash
+./bin/cleanup-rtk-artifacts.sh
+```
+
+It reports dangling `rtk` symlinks, an orphaned `~/.claude/hooks/rtk-rewrite.sh`, and any hook in your `settings.json` that still calls `rtk` directly instead of going through the shim. Add `--apply` to delete what it found.
 
 ## Externals (auto-installed by `install.sh`)
 
 | Tool | Repo |
 |---|---|
-| Headroom (bundles RTK) | https://github.com/headroomlabs-ai/headroom |
+| Headroom | https://github.com/headroomlabs-ai/headroom |
+| RTK | https://github.com/rtk-ai/rtk (`brew install rtk`) |
 | codebase-memory-mcp | https://github.com/DeusData/codebase-memory-mcp |
 | context-mode plugin | https://github.com/mksglu/context-mode |
 | Caveman plugin | https://github.com/JuliusBrussee/caveman |
-| RTK standalone | https://github.com/rtk-ai/rtk |
+
+Headroom used to vendor RTK. [headroomlabs-ai/headroom#2677](https://github.com/headroomlabs-ai/headroom/pull/2677) removed it in July 2026, so `install.sh` installs RTK on its own. The two are unrelated projects and either one works without the other.
 
 ### Optional — required only for `/e2e` and `/e2e-auto`
 

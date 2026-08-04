@@ -1,0 +1,89 @@
+#!/bin/bash
+# Hook shim: resolve a CLI by name, then exec it with the remaining args.
+#
+# Claude Code spawns hook commands without sourcing the user's shell rc, so the
+# hook PATH is whatever the Claude Code process inherited. Tools installed into
+# rc-added dirs are therefore invisible to hooks even though the same command
+# works in the Bash tool (which does load the profile). A bare `rtk hook claude`
+# in settings.json dies with `rtk: No such file or directory (os error 2)`.
+#
+# Headroom bundles rtk into ~/.headroom/bin, which no installer adds to PATH —
+# see headroomlabs-ai/headroom#487. pip --user and npm -g land in equally
+# unpredictable places. We probe the known install dirs instead.
+#
+# A missing binary is NOT an error: these hooks are optional accelerators, so we
+# exit 0 and let the tool call through rather than blocking work on a tool the
+# user may have deliberately skipped.
+#
+# Usage:
+#   run-cli-hook <bin> [args...]   exec <bin> (exit 0 if <bin> is not installed)
+#   run-cli-hook --which <bin>     print resolved path, exit 1 if unresolvable
+set -uo pipefail
+
+WHICH=0
+if [ "${1:-}" = "--which" ]; then
+  WHICH=1
+  shift
+fi
+
+BIN=${1:-}
+[ -n "$BIN" ] || exit $(( WHICH ))
+shift 2>/dev/null || true
+
+resolve_cli() {
+  local name=$1 dir resolved user_base override override_var
+
+  # Explicit override wins: CCT_RTK_BIN, CCT_CONTEXT_MODE_BIN, ...
+  override_var="CCT_$(echo "$name" | tr '[:lower:].-' '[:upper:]__')_BIN"
+  override=${!override_var:-}
+  if [ -n "$override" ] && [ -x "$override" ]; then
+    printf '%s\n' "$override"; return 0
+  fi
+
+  # PATH first — respects a user who has already wired things up correctly.
+  if resolved=$(command -v "$name" 2>/dev/null) && [ -n "$resolved" ]; then
+    printf '%s\n' "$resolved"; return 0
+  fi
+
+  # Static probes: pure builtins + file tests, no subprocess cost. This runs on
+  # every Bash tool call, so keep the common cases first.
+  for dir in \
+    "$HOME/.headroom/bin" \
+    "$HOME/.local/bin" \
+    "/opt/homebrew/bin" \
+    "/usr/local/bin" \
+    "$HOME/.cargo/bin" \
+    "$HOME/.bun/bin" \
+    "$HOME/.volta/bin" \
+    "$HOME/.npm-global/bin"
+  do
+    if [ -x "$dir/$name" ]; then printf '%s\n' "$dir/$name"; return 0; fi
+  done
+
+  # Glob probes: pip --user on stock macOS python, and node version managers.
+  for dir in \
+    "$HOME/Library/Python"/*/bin \
+    "$HOME/.nvm/versions/node"/*/bin \
+    "$HOME/.local/share/mise/installs/node"/*/bin
+  do
+    if [ -x "$dir/$name" ]; then printf '%s\n' "$dir/$name"; return 0; fi
+  done
+
+  # Last resort: ask python3 where `pip install --user` actually points. Costs a
+  # process, so it only runs when everything cheap has already missed.
+  if user_base=$(python3 -c 'import site; print(site.USER_BASE)' 2>/dev/null) \
+     && [ -n "$user_base" ] && [ -x "$user_base/bin/$name" ]; then
+    printf '%s\n' "$user_base/bin/$name"; return 0
+  fi
+
+  return 1
+}
+
+if BIN_PATH=$(resolve_cli "$BIN"); then
+  [ "$WHICH" -eq 1 ] && { printf '%s\n' "$BIN_PATH"; exit 0; }
+  exec "$BIN_PATH" "$@"
+fi
+
+# Not installed. --which reports it; hook mode stays out of the way.
+[ "$WHICH" -eq 1 ] && exit 1
+exit 0

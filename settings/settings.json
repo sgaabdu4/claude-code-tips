@@ -6,14 +6,14 @@
     "ENABLE_PROMPT_CACHING_1H": "1",
     "BASH_MAX_OUTPUT_LENGTH": "10000",
     "MAX_MCP_OUTPUT_TOKENS": "10000",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5[1m]",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6"
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5"
   },
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "claude-opus-4-7",
+  "model": "claude-opus-5",
   "effortLevel": "xhigh",
   "advisorModel": "opus",
   "hooks": {
@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "context-mode hook claude-code pretooluse"
+            "command": "~/.claude/hooks/run-cli-hook context-mode hook claude-code pretooluse"
           },
           {
             "type": "command",
@@ -35,7 +35,7 @@
           },
           {
             "type": "command",
-            "command": "rtk hook claude"
+            "command": "~/.claude/hooks/run-cli-hook rtk hook claude"
           }
         ]
       },
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "context-mode hook claude-code posttooluse"
+            "command": "~/.claude/hooks/run-cli-hook context-mode hook claude-code posttooluse"
           },
           {
             "type": "command",
@@ -81,7 +81,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "context-mode hook claude-code precompact"
+            "command": "~/.claude/hooks/run-cli-hook context-mode hook claude-code precompact"
           }
         ]
       }
@@ -91,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "context-mode hook claude-code sessionstart"
+            "command": "~/.claude/hooks/run-cli-hook context-mode hook claude-code sessionstart"
           },
           {
             "type": "command",

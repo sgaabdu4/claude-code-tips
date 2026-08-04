@@ -73,7 +73,7 @@ Delegate default. Main = coordinator.
 - **Type**: `general-purpose` (edits), `Plan` (read-only arch), `Explore` (read-only nav).
 - **Prompt**: self-contained, <500 tok. Goal + context + constraint + return format.
 - **Return**: "report <200 words".
-- **Model**: default sonnet via env. Override `model: claude-opus-4-7` for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
+- **Model**: default sonnet via env. Override `model: claude-opus-5` for refactor/audit/multi-file impact/edge-case-hunter/staff-engineer.
 - Big task → advisor after.
 
 ## Writing

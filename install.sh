@@ -95,6 +95,7 @@ prepare_settings_source() {
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
   echo "=== install.sh --check ==="
   fail=0
+  warn=0
 
   # 1. JSON syntax
   if ! command -v jq >/dev/null 2>&1; then
@@ -106,16 +107,35 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
     fi
   fi
 
-  # 2. Every hook command path in settings resolves to a file in repo hooks/
+  # 2. Every hook command in settings resolves — both halves of it:
+  #    a) ~/.claude/hooks/* paths must exist as files in repo hooks/
+  #    b) the CLI a hook ultimately runs must be findable on a hook's PATH.
+  #    (b) is the check that was missing: hooks are spawned without the user's
+  #    shell rc, so a bare `rtk hook claude` died with ENOENT while --check
+  #    still printed OK. See issue #2.
   if command -v jq >/dev/null 2>&1; then
     while IFS= read -r cmd; do
       [[ -z "$cmd" ]] && continue
-      hook_path="${cmd//\~/$HOME}"
-      hook_path="${hook_path%% *}"
-      [[ "$hook_path" == "$HOME/.claude/hooks/"* ]] || continue
-      hook_name="${hook_path##*/}"
-      if [[ ! -f "$REPO_DIR/hooks/$hook_name" ]]; then
-        echo "FAIL: settings.json references hook '$hook_name' but $REPO_DIR/hooks/$hook_name missing"; fail=1
+      read -r head arg1 _ <<<"$cmd"
+      hook_path="${head//\~/$HOME}"
+      if [[ "$hook_path" == "$HOME/.claude/hooks/"* ]]; then
+        hook_name="${hook_path##*/}"
+        if [[ ! -f "$REPO_DIR/hooks/$hook_name" ]]; then
+          echo "FAIL: settings.json references hook '$hook_name' but $REPO_DIR/hooks/$hook_name missing"; fail=1
+          continue
+        fi
+        # Shim form `run-cli-hook <bin> ...` — the dispatched CLI must resolve.
+        [[ "$hook_name" == "run-cli-hook" && -n "$arg1" ]] || continue
+        bin="$arg1"
+      else
+        bin="$head"
+      fi
+      # Absolute paths and shell interpreters are not our lookup problem.
+      [[ "$bin" == /* || "$bin" == bash || "$bin" == sh ]] && continue
+      if ! "$REPO_DIR/hooks/run-cli-hook" --which "$bin" >/dev/null 2>&1; then
+        echo "WARN: hook '$cmd' needs '$bin', not found on PATH or in any known install dir"
+        echo "      → install it, or set CCT_$(echo "$bin" | tr '[:lower:].-' '[:upper:]__')_BIN to its absolute path"
+        warn=$((warn + 1))
       fi
     done < <(jq -r '[.. | objects | select(.command? != null) | .command] | .[]' "$SETTINGS_SOURCE")
   fi
@@ -139,7 +159,11 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
   done
 
   if [[ $fail -eq 0 ]]; then
-    echo "OK: all hooks, command plugin refs, and bin/ scripts resolve"
+    if [[ $warn -gt 0 ]]; then
+      echo "OK: all hooks, command plugin refs, and bin/ scripts resolve ($warn warning(s) above)"
+    else
+      echo "OK: all hooks, command plugin refs, and bin/ scripts resolve"
+    fi
     exit 0
   fi
   exit 1

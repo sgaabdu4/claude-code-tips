@@ -45,6 +45,12 @@ Default stays maximal. These flags narrow blast radius without editing the scrip
 
 Walks `settings.json`, asserts every hook command path resolves on disk, every `mcp__plugin_*` reference in commands has a matching `enabledPlugins` entry, every `bin/` script referenced by a hook exists. Catches "hook referenced but not installed" forever.
 
+It also resolves the **CLI each hook actually runs** (`rtk`, `context-mode`) the way a hook would — no shell rc — and prints a `WARN` when one is unreachable. Run the test suite with:
+
+```bash
+./tests/run-cli-hook.test.sh
+```
+
 ## Layout
 
 | Path | Purpose |
@@ -52,7 +58,8 @@ Walks `settings.json`, asserts every hook command path resolves on disk, every `
 | [`install.sh`](./install.sh) | One-click power-user install. Supports `--check`, `--no-shell-wrapper`, `--no-caveman`, and `--sonnet`. |
 | [`settings/settings.json`](./settings/settings.json) | `~/.claude/settings.json` — model, effort, hooks, env, plugins, statusline |
 | [`CLAUDE.md.example`](./CLAUDE.md.example) | Body of `~/.claude/CLAUDE.md` — rules + tool routing. Wrapped in `<!--cct-->` markers when installed |
-| [`hooks/`](./hooks/) | All enforcement hooks (cbm-*, bash-ban-raw-tools, sync-*-on-edit, flutter-ctx-redirect, memory-repo-symlink) |
+| [`hooks/`](./hooks/) | All enforcement hooks (cbm-*, bash-ban-raw-tools, sync-*-on-edit, flutter-ctx-redirect, memory-repo-symlink) plus `run-cli-hook`, the PATH-resilient shim every external CLI hook goes through |
+| [`tests/`](./tests/) | Sandboxed tests (throwaway `$HOME`, never touches your real `~/.claude`) |
 | [`commands/`](./commands/) | Slash commands (`/e2e`, `/e2e-auto`, `/unleash`, `/ship`) |
 | [`rules/`](./rules/) | **Empty by design** — your stack-specific rules. See [`rules/README.md`](./rules/README.md) for the template |
 | [`bin/`](./bin/) | Helper scripts (`sync-copilot.mjs`, `sync-runner-tools.mjs`) referenced by hooks |
@@ -64,7 +71,7 @@ Subagent definitions are private by design. The commands can call local agents f
 
 ```
 shell wrapper           claude → headroom wrap claude
-PreToolUse(Bash)        context-mode + bash-ban-raw-tools + flutter-ctx-redirect + rtk
+PreToolUse(Bash)        run-cli-hook context-mode + bash-ban-raw-tools + flutter-ctx-redirect + run-cli-hook rtk
 PreToolUse(Grep|...)    cbm-code-discovery-gate
 PostToolUse             context-mode + cbm-mcp-marker
 PostToolUse(Edit|Write) sync-copilot-on-edit + sync-runner-tools-on-edit
@@ -72,11 +79,30 @@ PreCompact              context-mode
 SessionStart            context-mode + memory-repo-symlink + cbm-session-reminder
 ```
 
+### Why hooks go through `run-cli-hook`
+
+Claude Code spawns hook commands **without sourcing your shell rc**, so a hook only sees the PATH the Claude Code process inherited. Headroom installs `rtk` into `~/.headroom/bin`, `pip --user` and `npm -g` land elsewhere again, and none of those dirs are on that PATH. A bare `rtk hook claude` therefore dies with:
+
+```
+PreToolUse:Bash hook error
+Failed with non-blocking status code: [rtk: No such file or directory (os error 2)]
+```
+
+— while the exact same command works when *you* run it, because the Bash tool does load your profile.
+
+`hooks/run-cli-hook` resolves the binary itself (PATH → `~/.headroom/bin` → `~/.local/bin` → Homebrew → cargo/bun/volta/nvm → `pip --user` base) and execs it. If the CLI genuinely isn't installed it exits 0 silently, so a missing optional tool never blocks a tool call. Installed somewhere exotic? Point it there explicitly:
+
+```bash
+export CCT_RTK_BIN="$HOME/.headroom/bin/rtk"
+```
+
+Same pattern for any shimmed CLI — `CCT_CONTEXT_MODE_BIN`, etc.
+
 ## Externals (auto-installed by `install.sh`)
 
 | Tool | Repo |
 |---|---|
-| Headroom (bundles RTK) | https://github.com/chopratejas/headroom |
+| Headroom (bundles RTK) | https://github.com/headroomlabs-ai/headroom |
 | codebase-memory-mcp | https://github.com/DeusData/codebase-memory-mcp |
 | context-mode plugin | https://github.com/mksglu/context-mode |
 | Caveman plugin | https://github.com/JuliusBrussee/caveman |

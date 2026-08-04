@@ -295,7 +295,14 @@ fi
 # `context-mode hook claude-code <event>`, so the global CLI is required —
 # without it those hooks fail with "command not found".
 echo "→ Installing context-mode CLI (hook dispatcher binary)..."
-if command -v npm >/dev/null 2>&1; then
+# A vendored or version-managed copy earlier in PATH shadows whatever npm puts
+# in the global prefix, so `npm install -g` would leave a second copy that the
+# hooks never run — an upgrade that looks like it worked and didn't. If the CLI
+# already resolves, leave it to whatever owns it.
+if existing_cm=$("$REPO_DIR/hooks/run-cli-hook" --which context-mode 2>/dev/null); then
+  echo "  ✓ context-mode already resolves → $existing_cm"
+  echo "    Skipping 'npm install -g' so we don't create a shadowed second copy."
+elif command -v npm >/dev/null 2>&1; then
   npm install -g context-mode 2>/dev/null \
     || echo "  ⚠ npm install -g context-mode failed — run manually after this script."
 else

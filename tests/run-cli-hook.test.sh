@@ -51,6 +51,50 @@ out=$(echo '{"tool_name":"Bash"}' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$S
 check "resolves rtk from ~/.headroom/bin when PATH lacks it" \
       'ran:rtk args:hook claude stdin:{"tool_name":"Bash"}' "$out"
 
+# 1b. Issue #2, second report: ~/.headroom/bin/rtk existed, was executable and
+#     was not a dangling symlink, so --which called it resolved — but its
+#     shebang interpreter was gone, and execve reports ENOENT against the
+#     *script*, reproducing the original error message exactly. The shim must
+#     reject that candidate and keep looking.
+# Named so it exists nowhere real: the probe list contains absolute dirs like
+# /opt/homebrew/bin that no sandbox HOME can isolate.
+DEAD_HOME="$SANDBOX/dead"
+mkdir -p "$DEAD_HOME/.headroom/bin" "$DEAD_HOME/.local/bin"
+printf '#!%s/nope/python3\nprint(1)\n' "$DEAD_HOME" > "$DEAD_HOME/.headroom/bin/cctrtk"
+chmod +x "$DEAD_HOME/.headroom/bin/cctrtk"
+out=$(env -i HOME="$DEAD_HOME" PATH="$BARE_PATH" "$SHIM" --which cctrtk 2>&1)
+rc=$?
+check "--which rejects a binary whose shebang interpreter is gone" "1" "$rc"
+check "  ...and reports nothing rather than the broken path" "" "$out"
+
+# The rejected candidate must not mask a working copy installed elsewhere.
+make_stub "$DEAD_HOME/.local/bin" cctrtk
+out=$(echo 'x' | env -i HOME="$DEAD_HOME" PATH="$BARE_PATH" "$SHIM" cctrtk hook claude 2>&1)
+check "skips the broken candidate and uses the working one" \
+      'ran:cctrtk args:hook claude stdin:x' "$out"
+
+# Same hazard on PATH itself, which `command -v` would have returned blindly.
+PATH_HOME="$SANDBOX/pathdead"
+mkdir -p "$PATH_HOME/broken" "$PATH_HOME/good"
+printf '#!%s/nope/python3\n' "$PATH_HOME" > "$PATH_HOME/broken/rtk"
+chmod +x "$PATH_HOME/broken/rtk"
+make_stub "$PATH_HOME/good" rtk
+out=$(echo 'y' | env -i HOME="$PATH_HOME" PATH="$PATH_HOME/broken:$PATH_HOME/good:$BARE_PATH" "$SHIM" rtk hook claude 2>&1)
+check "walks past a broken PATH entry to a working one" \
+      'ran:rtk args:hook claude stdin:y' "$out"
+
+# A real binary has no shebang at all and must still resolve. /bin/echo rather
+# than `command -v true`, which returns the shell builtin's name, not a path.
+BIN_HOME="$SANDBOX/realbin"
+mkdir -p "$BIN_HOME/.local/bin"
+cp /bin/echo "$BIN_HOME/.local/bin/cctrtk" 2>/dev/null && chmod +x "$BIN_HOME/.local/bin/cctrtk"
+if [[ -x "$BIN_HOME/.local/bin/cctrtk" ]]; then
+  out=$(env -i HOME="$BIN_HOME" PATH="$BARE_PATH" "$SHIM" --which cctrtk 2>&1)
+  check "a shebang-less real binary still resolves" "$BIN_HOME/.local/bin/cctrtk" "$out"
+else
+  skip "a shebang-less real binary still resolves" "could not copy a test binary"
+fi
+
 # 2. Same for pip --user / npm -g style installs.
 make_stub "$SANDBOX/.local/bin" context-mode
 out=$(echo 'payload' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" context-mode hook claude-code pretooluse 2>&1)
@@ -276,6 +320,33 @@ if grep -qi 'bundle[sd]* RTK\|bundled in Headroom' "$REPO_DIR/install.sh" "$REPO
 else
   ok "no stale 'Headroom bundles RTK' claim"
 fi
+
+# Every long-running child must have stdin closed. `codebase-memory-mcp setup
+# claude-code` starts the MCP server and reads stdin forever; inheriting a live
+# stdin hung the installer with no output. Same hazard for `claude plugin`.
+# Anchored: the same strings appear inside echo'd "run this manually" hints.
+stdin_leaks=$(grep -nE '^[[:space:]]*("\$HOME/\.local/bin/\$CBM_BIN" setup|claude plugin )' \
+              "$REPO_DIR/install.sh" | grep -v '</dev/null')
+if [[ -z "$stdin_leaks" ]]; then
+  ok "installer closes stdin on every blocking child"
+else
+  bad "installer closes stdin on every blocking child" "missing </dev/null: $stdin_leaks"
+fi
+
+echo
+echo "=== statusline ==="
+
+# Model shortening. Opus 5 has no minor version, and a dot-requiring regex
+# silently printed "Claude Opus 5" in full where it should read "o5".
+SL="$REPO_DIR/statusline/statusline-command.sh"
+sl_model() { # sl_model <display_name>
+  printf '{"model":{"display_name":"%s"},"workspace":{"current_dir":"%s"}}' "$1" "$SANDBOX" \
+    | bash "$SL" 2>/dev/null | grep -oE '\b[hso][0-9]+(\.[0-9]+)?\b' | head -1
+}
+check "shortens Claude Opus 5"    "o5"   "$(sl_model 'Claude Opus 5')"
+check "shortens Claude Sonnet 5"  "s5"   "$(sl_model 'Claude Sonnet 5')"
+check "shortens Claude Haiku 4.5" "h4.5" "$(sl_model 'Claude Haiku 4.5')"
+check "shortens Claude Opus 4.7"  "o4.7" "$(sl_model 'Claude Opus 4.7')"
 
 echo
 echo "passed: $pass  failed: $fail  skipped: $skipped"

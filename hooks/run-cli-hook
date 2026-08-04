@@ -30,20 +30,54 @@ BIN=${1:-}
 [ -n "$BIN" ] || exit $(( WHICH ))
 shift 2>/dev/null || true
 
+# `-x` is only a permission bit. A wrapper script whose shebang interpreter has
+# since been deleted passes every static test and then fails execve with ENOENT
+# naming the *script*, which is how a live, non-symlink ~/.headroom/bin/rtk kept
+# producing `rtk: No such file or directory (os error 2)` while --which happily
+# reported it as resolved. Reported in issue #2.
+usable() {
+  local cand=$1 magic line interp
+  [ -x "$cand" ] || return 1
+  # Two bytes first: a real binary can run for megabytes before a newline.
+  IFS= read -r -n 2 magic < "$cand" 2>/dev/null || return 0
+  [ "$magic" = "#!" ] || return 0
+  IFS= read -r line < "$cand" 2>/dev/null || return 0
+  interp=${line#\#!}
+  interp=${interp#"${interp%%[![:space:]]*}"}
+  interp=${interp%%[[:space:]]*}
+  [ -n "$interp" ] || return 0
+  [ -x "$interp" ] || return 1
+  # `#!/usr/bin/env foo` defers the real lookup to PATH at exec time.
+  if [ "${interp##*/}" = "env" ]; then
+    local rest prog
+    rest=${line#\#!}
+    rest=${rest#*env}
+    prog=${rest#"${rest%%[![:space:]]*}"}
+    prog=${prog%%[[:space:]]*}
+    [ -z "$prog" ] || command -v "$prog" >/dev/null 2>&1 || return 1
+  fi
+  return 0
+}
+
 resolve_cli() {
-  local name=$1 dir resolved user_base override override_var
+  local name=$1 dir user_base override override_var
+  local -a path_dirs
 
   # Explicit override wins: CCT_RTK_BIN, CCT_CONTEXT_MODE_BIN, ...
   override_var="CCT_$(echo "$name" | tr '[:lower:].-' '[:upper:]__')_BIN"
   override=${!override_var:-}
-  if [ -n "$override" ] && [ -x "$override" ]; then
+  if [ -n "$override" ] && usable "$override"; then
     printf '%s\n' "$override"; return 0
   fi
 
   # PATH first — respects a user who has already wired things up correctly.
-  if resolved=$(command -v "$name" 2>/dev/null) && [ -n "$resolved" ]; then
-    printf '%s\n' "$resolved"; return 0
-  fi
+  # Walked entry by entry rather than via `command -v` so one unusable early
+  # match cannot mask a working copy further down.
+  IFS=: read -r -a path_dirs <<<"${PATH:-}"
+  for dir in "${path_dirs[@]}"; do
+    [ -n "$dir" ] || continue
+    if usable "$dir/$name"; then printf '%s\n' "$dir/$name"; return 0; fi
+  done
 
   # Static probes: pure builtins + file tests, no subprocess cost. This runs on
   # every Bash tool call, so keep the common cases first.
@@ -57,7 +91,7 @@ resolve_cli() {
     "$HOME/.volta/bin" \
     "$HOME/.npm-global/bin"
   do
-    if [ -x "$dir/$name" ]; then printf '%s\n' "$dir/$name"; return 0; fi
+    if usable "$dir/$name"; then printf '%s\n' "$dir/$name"; return 0; fi
   done
 
   # Glob probes: pip --user on stock macOS python, and node version managers.
@@ -66,13 +100,13 @@ resolve_cli() {
     "$HOME/.nvm/versions/node"/*/bin \
     "$HOME/.local/share/mise/installs/node"/*/bin
   do
-    if [ -x "$dir/$name" ]; then printf '%s\n' "$dir/$name"; return 0; fi
+    if usable "$dir/$name"; then printf '%s\n' "$dir/$name"; return 0; fi
   done
 
   # Last resort: ask python3 where `pip install --user` actually points. Costs a
   # process, so it only runs when everything cheap has already missed.
   if user_base=$(python3 -c 'import site; print(site.USER_BASE)' 2>/dev/null) \
-     && [ -n "$user_base" ] && [ -x "$user_base/bin/$name" ]; then
+     && [ -n "$user_base" ] && usable "$user_base/bin/$name"; then
     printf '%s\n' "$user_base/bin/$name"; return 0
   fi
 

@@ -335,7 +335,12 @@ if [[ -n "$OS_NAME" && -n "$OS_ARCH" ]]; then
     if [[ -f "$CBM_TMP/$CBM_BIN" ]]; then
       mv "$CBM_TMP/$CBM_BIN" "$HOME/.local/bin/$CBM_BIN"
       chmod +x "$HOME/.local/bin/$CBM_BIN"
-      "$HOME/.local/bin/$CBM_BIN" setup claude-code 2>/dev/null || true
+      # </dev/null is load-bearing. `setup claude-code` does not configure and
+      # return — as of 0.9.0 it starts the MCP server in stdio mode and reads
+      # stdin forever, so inheriting a live stdin hangs the installer here with
+      # no output. Closing stdin gives it EOF and it shuts down. CI never caught
+      # it because a runner hands the step an already-closed stdin. Issue #2.
+      "$HOME/.local/bin/$CBM_BIN" setup claude-code </dev/null >/dev/null 2>&1 || true
       echo "  ✓ CBM installed at ~/.local/bin/$CBM_BIN"
       STATUS_CBM="ok"
     else
@@ -366,14 +371,14 @@ if ! command -v claude >/dev/null 2>&1; then
     echo "    claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman"
   fi
 else
-  claude plugin marketplace add mksglu/context-mode 2>/dev/null \
+  claude plugin marketplace add mksglu/context-mode </dev/null 2>/dev/null \
     || echo "  (run 'claude plugin marketplace add mksglu/context-mode' manually if this failed)"
-  claude plugin install context-mode@context-mode 2>/dev/null \
+  claude plugin install context-mode@context-mode </dev/null 2>/dev/null \
     || echo "  (run 'claude plugin install context-mode@context-mode' manually if this failed)"
   if [[ "$INSTALL_CAVEMAN" -eq 1 ]]; then
-    claude plugin marketplace add JuliusBrussee/caveman 2>/dev/null \
+    claude plugin marketplace add JuliusBrussee/caveman </dev/null 2>/dev/null \
       || echo "  (run 'claude plugin marketplace add JuliusBrussee/caveman' manually if this failed)"
-    claude plugin install caveman@caveman 2>/dev/null \
+    claude plugin install caveman@caveman </dev/null 2>/dev/null \
       || echo "  (run 'claude plugin install caveman@caveman' manually if this failed)"
   fi
 fi

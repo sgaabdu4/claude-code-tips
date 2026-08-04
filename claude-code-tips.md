@@ -67,12 +67,22 @@ Each layer catches what the previous missed. Different points, no overlap.
 
 ---
 
+## Important caveat: startup cost vs task savings
+
+This is not a free win for tiny cold-start sessions. MCP servers load tool definitions into the session. If you enable Headroom, CBM, context-mode, Caveman, and a pile of unrelated MCP servers, the first prompt can cost more than stock Claude Code.
+
+The savings show up after that fixed cost is paid: when Claude would otherwise read many files, dump long logs, inspect big diffs, rerun searches, or coordinate agents. For one-off questions like "where is auth handled?", stock Claude Code may be cheaper unless your MCP list is tight and CBM already has the repo indexed.
+
+My rule: keep the MCP list boring. Start with `codebase-memory-mcp` + `context-mode`. Add other MCPs only for the task in front of you, then remove or disable them. Use `claude mcp list` to audit, `claude mcp get <name>` to inspect, and `claude mcp remove <name>` to remove. Prefer `--scope local` or `--scope project` for repo-specific tools; reserve `--scope user` for tools you truly want in every project. Anthropic's MCP docs cover the commands and scopes [here](https://docs.anthropic.com/en/docs/claude-code/mcp).
+
+---
+
 ## Quick wins before you touch any hooks
 
 Three zero-effort moves that save tokens today:
 
 - **`/clear` aggressively.** Short focused sessions beat long ones. The longer the session, the more Claude re-reads its own trail. ([Claude Code slash commands](https://code.claude.com/docs/en/claude-code/slash-commands))
-- **Disable unused MCP servers per session.** `claude mcp list` → drop anything this task doesn't need. Unused servers burn context silently via tool descriptions. ([`claude mcp` reference](https://code.claude.com/docs/en/claude-code/cli-reference#mcp))
+- **Disable unused MCP servers per session.** `claude mcp list` -> drop anything this task doesn't need. Unused servers burn context silently via tool descriptions. ([Claude Code MCP reference](https://docs.anthropic.com/en/docs/claude-code/mcp))
 - **Prefer Mermaid over prose for architecture.** A 6-line Mermaid diagram carries the same shape as 3 paragraphs at a fraction of the tokens, and Claude parses it natively.
 
 ---
@@ -82,6 +92,8 @@ Three zero-effort moves that save tokens today:
 **Repo:** [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)
 
 **What it does:** Indexes your entire codebase into a persistent knowledge graph using tree-sitter AST parsing across 66 languages. Instead of reading files to answer "who calls this function?" or "show me the architecture," Claude queries the graph and gets structured answers in ~50 tokens instead of reading 50 files (~400K tokens).
+
+**"Index once" means:** build the graph for the repo, then reuse it for questions until the code changes. Do not re-index for every small question. For "where is auth done?", ask CBM for auth/login/session/token/JWT routes and symbols first, then read only the files or snippets it points to. After meaningful code changes, run `detect_changes` or re-index.
 
 **Real numbers:** Five structural queries consumed ~3,400 tokens via CBM versus ~412,000 tokens via file-by-file grep exploration, a **99.2% reduction**.
 
@@ -314,6 +326,8 @@ Point `statusLine.command` at [`statusline/statusline-command.sh`](https://githu
 Headline numbers: sessions go from ~30 min to 3+ hours on the same 200K window. Tokens per code exploration drop from ~400K to ~3.4K. Shell output lands at 10-40% of original, API payload at 8-53%, Claude's own response verbosity at 25-50%. Full before/after table:
 
 https://gist.github.com/sgaabdu4/441d7cf66c30c62db122ba55a9e277f9
+
+These are workload numbers, not a promise that a fresh session answering one simple question will beat stock Claude Code. If `/context` shows a big startup jump, audit MCPs first.
 
 Layers compound. Each catches what the previous missed.
 

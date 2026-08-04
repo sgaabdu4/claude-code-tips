@@ -1,5 +1,7 @@
 # Claude Code Token-Optimisation Stack
 
+[![ci](https://github.com/sgaabdu4/claude-code-tips/actions/workflows/ci.yml/badge.svg)](https://github.com/sgaabdu4/claude-code-tips/actions/workflows/ci.yml)
+
 Configs + hooks + scripts for Medium post: **"How I Cut Claude Code Token Usage by 90%+"**.
 
 This repo is intentionally a **power-user default**: it assumes you want aggressive token control, enforcement hooks, and a local shell wrapper. If you want the full stack, run the default installer. If you want less global surface area, use the opt-out flags below.
@@ -7,6 +9,19 @@ This repo is intentionally a **power-user default**: it assumes you want aggress
 Post: [`claude-code-tips.md`](./claude-code-tips.md)
 
 Stack: **CBM** (code graph) + **context-mode** (output sandbox) + **RTK** (shell compression) + **Headroom** (API-layer) + **Caveman** (Claude output) + enforcement hooks. ~30min → 3h+ sessions, same 200K window.
+
+## Platforms
+
+Every push runs the full installer end to end on macOS, Linux and Windows, then asserts the binaries it claims to have installed are actually resolvable. Badge above.
+
+| Platform | Status |
+|---|---|
+| macOS (arm64, x86_64) | Supported |
+| Linux (arm64, amd64) | Supported |
+| Windows via **Git Bash** | Supported. `install.sh` fetches the Windows builds of RTK and CBM, which their own installers skip |
+| Windows via WSL2 | Treated as Linux, so it should work, but nothing runs it in CI |
+
+Two Windows caveats worth knowing before you rely on it. The shell wrapper is only exercised with `--no-shell-wrapper` in CI, so aliasing `claude` on Windows is unverified. And CI proves the hooks run under Git Bash, not that a native Windows install of Claude Code can spawn an extensionless bash script through cmd. If you're on Windows, running Claude Code inside WSL2 or Git Bash is the path that's actually been tested.
 
 ## Install
 

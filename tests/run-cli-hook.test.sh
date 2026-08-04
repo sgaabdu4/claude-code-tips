@@ -158,7 +158,9 @@ if grep -q 'CCT_CCT_ABSENT_CLI_BIN' <<<"$out"; then
 else
   bad "--check names the override env var in its remedy" "no override hint in: $out"
 fi
-if grep -q '1 warning(s)' <<<"$out"; then
+# Count, not a fixed number: on a bare machine rtk and context-mode are absent
+# too, so the total depends on what the host happens to have installed.
+if grep -qE '[1-9][0-9]* warning\(s\)' <<<"$out"; then
   ok "--check summary reports the warning count"
 else
   bad "--check summary reports the warning count" "summary did not mention warnings: $(tail -1 <<<"$out")"
@@ -189,7 +191,7 @@ else
 fi
 
 if [[ $CAN_DANGLE -eq 1 ]]; then
-  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+  out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" 2>&1)
   if grep -q "dangling: $CBIN/rtk" <<<"$out"; then
     ok "reports a dangling rtk symlink"
   else
@@ -197,25 +199,25 @@ if [[ $CAN_DANGLE -eq 1 ]]; then
   fi
   check "default run does not delete anything" "yes" "$([[ -L "$CBIN/rtk" ]] && echo yes || echo no)"
 
-  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply 2>&1)
+  out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" --apply 2>&1)
   check "--apply removes the dangling symlink" "no" "$([[ -e "$CBIN/rtk" || -L "$CBIN/rtk" ]] && echo yes || echo no)"
 else
   skip "reports a dangling rtk symlink" "$SYMLINK_REASON"
   skip "default run does not delete anything" "$SYMLINK_REASON"
   skip "--apply removes the dangling symlink" "$SYMLINK_REASON"
   # The scan must still be harmless where symlinks are not a thing.
-  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1); rc=$?
+  out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" 2>&1); rc=$?
   check "scan exits 0 with no symlinks to find" "0" "$rc"
 fi
 
 # A working rtk must survive both modes.
 make_stub "$CBIN" rtk
-env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply >/dev/null 2>&1
+env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" --apply >/dev/null 2>&1
 check "--apply leaves a working rtk alone" "yes" "$([[ -x "$CBIN/rtk" ]] && echo yes || echo no)"
 
 # Headroom's generated wrapper is only orphaned once rtk is gone for good.
 touch "$CHOME/.claude/hooks/rtk-rewrite.sh"
-out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" 2>&1)
 if grep -q "leaving it alone" <<<"$out"; then
   ok "keeps rtk-rewrite.sh while rtk still resolves"
 else
@@ -231,7 +233,7 @@ mkdir -p "$CLEAN_REPO/hooks" "$CLEAN_REPO/bin"
 cp "$CLEANUP" "$CLEAN_REPO/bin/"
 printf '#!/bin/bash\nexit 1\n' > "$CLEAN_REPO/hooks/run-cli-hook"
 chmod +x "$CLEAN_REPO/hooks/run-cli-hook"
-env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEAN_REPO/bin/cleanup-rtk-artifacts.sh" --apply >/dev/null 2>&1
+env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEAN_REPO/bin/cleanup-rtk-artifacts.sh" --apply >/dev/null 2>&1
 check "--apply removes rtk-rewrite.sh once rtk is gone" "no" \
       "$([[ -f "$CHOME/.claude/hooks/rtk-rewrite.sh" ]] && echo yes || echo no)"
 
@@ -239,7 +241,7 @@ check "--apply removes rtk-rewrite.sh once rtk is gone" "no" \
 cat > "$CHOME/.claude/settings.json" <<'JSON'
 {"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"rtk hook claude"}]}]}}
 JSON
-out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" 2>&1)
 if grep -q 'bypass the shim' <<<"$out"; then
   ok "flags a settings.json hook that calls rtk directly"
 else
@@ -250,7 +252,7 @@ fi
 cat > "$CHOME/.claude/settings.json" <<'JSON'
 {"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"~/.claude/hooks/run-cli-hook rtk hook claude"}]}]}}
 JSON
-out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+out=$(env HOME="$CHOME" PATH="$CBIN:$PATH" bash "$CLEANUP" 2>&1)
 if grep -q 'bypass the shim' <<<"$out"; then
   bad "does not flag the shimmed hook form" "false positive: $out"
 else

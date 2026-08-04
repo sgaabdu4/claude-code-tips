@@ -99,25 +99,19 @@ jobs:
             }
           }
 
-          # What Claude Code does today for a shell-form hook, if it uses the
-          # platform default shell.
-          Probe "cmd.exe /c (Node shell-form default on Windows)" {
-            cmd.exe /c "`"$hook`" --which rtk"
-          }
+          Write-Host "`nbash on cmd PATH: $(cmd.exe /c 'where bash 2>nul' | Out-String)"
 
-          # What it does if it routes hooks through the Git Bash it already
-          # resolves for the Bash tool.
-          Probe "git bash -c" {
-            & $gitbash -c "'$($hook -replace '\\','/')' --which rtk"
-          }
-
-          # Documented exec form: command resolved as an executable, spawned
-          # directly with args, no shell involved.
-          Probe "exec form (bash <hook> --which rtk)" {
-            & $gitbash $hook --which rtk
-          }
-
-          # Faithful reproduction: Node's own shell-form spawn.
-          Probe "node child_process shell-form" {
-            node -e "const{execSync}=require('child_process');try{process.stdout.write(execSync(JSON.stringify(process.argv[1])+' --which rtk').toString())}catch(e){process.stdout.write('FAILED: '+e.message)}" $hook
+          # Round 1 established that a bare hook path dies under cmd.exe and
+          # runs under Git Bash. We do not control which one Claude Code picks,
+          # so find a single command string that survives both.
+          $hookFwd = $hook -replace '\\','/'
+          $candidates = @(
+            @{ n = 'A backslash abs bash + backslash hook'; c = "`"$gitbash`" `"$hook`" --which rtk" },
+            @{ n = 'B forward-slash abs bash + fwd hook';   c = "`"$($gitbash -replace '\\','/')`" `"$hookFwd`" --which rtk" },
+            @{ n = 'C bare bash + fwd hook';                c = "bash `"$hookFwd`" --which rtk" },
+            @{ n = 'D backslash abs bash + fwd hook';       c = "`"$gitbash`" `"$hookFwd`" --which rtk" }
+          )
+          foreach ($cand in $candidates) {
+            Probe "$($cand.n) :: under cmd.exe" { cmd.exe /c $cand.c }
+            Probe "$($cand.n) :: under git bash" { & $gitbash -c $cand.c }
           }

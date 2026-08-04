@@ -74,3 +74,50 @@ jobs:
 
       - name: post-install --check
         run: ./install.sh --check
+
+      # Open question from the README: a native Windows Claude Code is a Node
+      # process, and Node's shell-form spawn uses ComSpec (cmd.exe), which
+      # cannot execute an extensionless shebang script. Probe each candidate
+      # spawn path against the hook we actually installed. Diagnostic for now;
+      # becomes an assertion once the answer is known.
+      - name: hook spawn probe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hook = "$env:USERPROFILE\.claude\hooks\run-cli-hook"
+          $gitbash = "C:\Program Files\Git\bin\bash.exe"
+          Write-Host "hook:     $hook (exists: $(Test-Path $hook))"
+          Write-Host "git bash: $gitbash (exists: $(Test-Path $gitbash))"
+
+          function Probe($label, $block) {
+            Write-Host "`n--- $label"
+            try {
+              $out = & $block 2>&1 | Out-String
+              Write-Host "exit=$LASTEXITCODE out=$($out.Trim())"
+            } catch {
+              Write-Host "threw: $($_.Exception.Message)"
+            }
+          }
+
+          # What Claude Code does today for a shell-form hook, if it uses the
+          # platform default shell.
+          Probe "cmd.exe /c (Node shell-form default on Windows)" {
+            cmd.exe /c "`"$hook`" --which rtk"
+          }
+
+          # What it does if it routes hooks through the Git Bash it already
+          # resolves for the Bash tool.
+          Probe "git bash -c" {
+            & $gitbash -c "'$($hook -replace '\\','/')' --which rtk"
+          }
+
+          # Documented exec form: command resolved as an executable, spawned
+          # directly with args, no shell involved.
+          Probe "exec form (bash <hook> --which rtk)" {
+            & $gitbash $hook --which rtk
+          }
+
+          # Faithful reproduction: Node's own shell-form spawn.
+          Probe "node child_process shell-form" {
+            node -e "const{execSync}=require('child_process');try{process.stdout.write(execSync(JSON.stringify(process.argv[1])+' --which rtk').toString())}catch(e){process.stdout.write('FAILED: '+e.message)}" $hook
+          }

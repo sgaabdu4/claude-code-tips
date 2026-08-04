@@ -67,8 +67,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS_SOURCE="$REPO_DIR/settings/settings.json"
 SETTINGS_TMP=""
 
+WIN_TMP=""
+
 cleanup_tmp() {
   [[ -n "${SETTINGS_TMP:-}" ]] && rm -f "$SETTINGS_TMP"
+  [[ -n "${WIN_TMP:-}" ]] && rm -f "$WIN_TMP"
   return 0
 }
 trap cleanup_tmp EXIT
@@ -506,11 +509,52 @@ inject_claude_md() {
 # Unions enabledPlugins + extraKnownMarketplaces, with explicit CLI flags allowed
 # to remove Caveman or force the sonnet/high model profile.
 # Falls back to plain copy if jq fails.
+
+# A hook command has to survive whichever shell Claude Code spawns it with. On
+# Windows that is not settled: cmd.exe expands neither `~` nor a shebang, so
+# `~/.claude/hooks/x` dies there while running fine under Git Bash. An absolute
+# bash.exe plus an absolute script path works under both, verified in CI.
+# A bare `bash` is not safe here — System32\bash.exe, the WSL launcher, often
+# sits ahead of Git's on PATH and would run the hook against a different
+# filesystem entirely.
+winify_settings() { # winify_settings <in> <out>
+  local bash_abs home_abs
+  command -v cygpath >/dev/null 2>&1 || return 1
+  bash_abs="$(cygpath -m "$(command -v bash)" 2>/dev/null)" || return 1
+  home_abs="$(cygpath -m "$HOME" 2>/dev/null)" || return 1
+  [[ -n "$bash_abs" && -n "$home_abs" ]] || return 1
+  jq --arg bash "$bash_abs" --arg home "$home_abs" '
+    def winify:
+      (if startswith("bash ~/") then .[5:] else . end) as $c
+      | if ($c | startswith("~/")) then
+          # Split before substituting: the ~ form has no spaces, an expanded
+          # C:/Users/First Last home does.
+          ($c | split(" ")) as $t
+          | ($t[0] | sub("^~"; $home)) as $script
+          | ($t[1:] | join(" ")) as $rest
+          | "\"\($bash)\" \"\($script)\"" + (if $rest == "" then "" else " \($rest)" end)
+        else . end;
+    walk(if type == "object" and (.command? | type) == "string"
+         then .command |= winify else . end)
+  ' "$1" > "$2"
+}
+
 merge_settings_json() {
   local target="$HOME/.claude/settings.json"
   local source="$SETTINGS_SOURCE"
   local skip_caveman=false
   [[ "$INSTALL_CAVEMAN" -eq 0 ]] && skip_caveman=true
+
+  if [[ "$OS_NAME" == "windows" ]]; then
+    WIN_TMP="$(mktemp)"
+    if winify_settings "$source" "$WIN_TMP"; then
+      source="$WIN_TMP"
+      echo "  ℹ Windows: hook commands pinned to an absolute bash.exe + script path"
+    else
+      echo "  ⚠ Windows: could not resolve bash.exe, leaving hook commands as-is."
+      echo "    They will not run if Claude Code spawns hooks through cmd.exe."
+    fi
+  fi
 
   if [[ ! -f "$target" ]]; then
     cp "$source" "$target"

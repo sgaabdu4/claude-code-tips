@@ -75,43 +75,41 @@ jobs:
       - name: post-install --check
         run: ./install.sh --check
 
-      # Open question from the README: a native Windows Claude Code is a Node
-      # process, and Node's shell-form spawn uses ComSpec (cmd.exe), which
-      # cannot execute an extensionless shebang script. Probe each candidate
-      # spawn path against the hook we actually installed. Diagnostic for now;
-      # becomes an assertion once the answer is known.
-      - name: hook spawn probe
+      # A native Windows Claude Code is a Node process, and Node's shell-form
+      # spawn uses ComSpec, so a hook can arrive at cmd.exe, which expands
+      # neither `~` nor a shebang. Assert every command we installed survives
+      # that spawn path as well as Git Bash. Without this the hooks silently
+      # never fire on a native install.
+      - name: installed hooks run under cmd.exe and Git Bash
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $hook = "$env:USERPROFILE\.claude\hooks\run-cli-hook"
-          $gitbash = "C:\Program Files\Git\bin\bash.exe"
-          Write-Host "hook:     $hook (exists: $(Test-Path $hook))"
-          Write-Host "git bash: $gitbash (exists: $(Test-Path $gitbash))"
+          $gitbash  = "C:\Program Files\Git\bin\bash.exe"
+          $settings = "$($env:USERPROFILE -replace '\\','/')/.claude/settings.json"
+          $cmds = & $gitbash -c "jq -r '[.. | objects | select(.command? != null) | .command] | .[]' '$settings'" |
+                  ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          Write-Host "$($cmds.Count) hook command(s) installed`n"
 
-          function Probe($label, $block) {
-            Write-Host "`n--- $label"
-            try {
-              $out = & $block 2>&1 | Out-String
-              Write-Host "exit=$LASTEXITCODE out=$($out.Trim())"
-            } catch {
-              Write-Host "threw: $($_.Exception.Message)"
+          $fail = 0
+          foreach ($c in $cmds) {
+            # An unwinified command still carries `~` or a bare shebang path.
+            if ($c -notmatch '^"[A-Za-z]:/[^"]*bash\.exe" "') {
+              Write-Host "FAIL not pinned to an absolute bash.exe :: $c"; $fail = 1; continue
+            }
+            foreach ($runner in @(
+              @{ n = 'cmd.exe';  b = { '{}' | cmd.exe /c $c 2>&1 } },
+              @{ n = 'git bash'; b = { '{}' | & $gitbash -c $c 2>&1 } }
+            )) {
+              # What is under test is whether the spawn resolves, not what the
+              # hook decides. A hook is entitled to a non-zero exit; 9009/127
+              # and the not-recognized text mean the shell never found it.
+              $out = & $runner.b | Out-String
+              if ($LASTEXITCODE -in 9009, 127 -or
+                  $out -match 'is not recognized|command not found|No such file') {
+                Write-Host "FAIL $($runner.n) exit=$LASTEXITCODE :: $c`n  $($out.Trim())"; $fail = 1
+              } else {
+                Write-Host "ok   $($runner.n) exit=$LASTEXITCODE :: $c"
+              }
             }
           }
-
-          Write-Host "`nbash on cmd PATH: $(cmd.exe /c 'where bash 2>nul' | Out-String)"
-
-          # Round 1 established that a bare hook path dies under cmd.exe and
-          # runs under Git Bash. We do not control which one Claude Code picks,
-          # so find a single command string that survives both.
-          $hookFwd = $hook -replace '\\','/'
-          $candidates = @(
-            @{ n = 'A backslash abs bash + backslash hook'; c = "`"$gitbash`" `"$hook`" --which rtk" },
-            @{ n = 'B forward-slash abs bash + fwd hook';   c = "`"$($gitbash -replace '\\','/')`" `"$hookFwd`" --which rtk" },
-            @{ n = 'C bare bash + fwd hook';                c = "bash `"$hookFwd`" --which rtk" },
-            @{ n = 'D backslash abs bash + fwd hook';       c = "`"$gitbash`" `"$hookFwd`" --which rtk" }
-          )
-          foreach ($cand in $candidates) {
-            Probe "$($cand.n) :: under cmd.exe" { cmd.exe /c $cand.c }
-            Probe "$($cand.n) :: under git bash" { & $gitbash -c $cand.c }
-          }
+          exit $fail

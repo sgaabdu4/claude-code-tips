@@ -57,9 +57,10 @@ fi
 echo "→ Checking ~/.claude/settings.json for hooks calling rtk directly..."
 settings="$HOME/.claude/settings.json"
 if [[ -f "$settings" ]] && command -v jq >/dev/null 2>&1; then
+  # tr -d '\r': jq.exe emits CRLF under Git Bash.
   stale=$(jq -r '[.. | objects | select(.command? != null) | .command]
                  | .[] | select(test("(^|/)rtk( |$)"))
-                 | select(test("run-cli-hook") | not)' "$settings" 2>/dev/null)
+                 | select(test("run-cli-hook") | not)' "$settings" 2>/dev/null | tr -d '\r')
   if [[ -n "$stale" ]]; then
     echo "  these bypass the shim and will break again if rtk moves:"
     printf '    %s\n' $stale

@@ -16,8 +16,10 @@ trap 'rm -rf "$SANDBOX"' EXIT
 
 pass=0
 fail=0
+skipped=0
 ok()   { echo "  ok   - $1"; pass=$((pass + 1)); }
 bad()  { echo "  FAIL - $1"; echo "         $2"; fail=$((fail + 1)); }
+skip() { echo "  skip - $1 ($2)"; skipped=$((skipped + 1)); }
 check() { # check <desc> <expected> <actual>
   if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1" "expected [$2] got [$3]"; fi
 }
@@ -172,18 +174,39 @@ mkdir -p "$CBIN" "$CHOME/.claude/hooks"
 
 # The exact leftover Headroom's removal produces: a symlink to a binary that is
 # no longer there. Present in $PATH, ENOENT on execve.
-ln -sf "$CHOME/gone/rtk" "$CBIN/rtk"
-
-out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
-if grep -q "dangling: $CBIN/rtk" <<<"$out"; then
-  ok "reports a dangling rtk symlink"
+#
+# Git Bash copies the target instead of linking unless winsymlinks is set, so a
+# dangling symlink cannot be created there at all. That makes the whole failure
+# mode unreachable on that platform rather than untested, but assert the
+# capability rather than the OS name so WSL and MSYS2 are judged on what they
+# can actually do.
+SYMLINK_REASON="platform cannot create dangling symlinks"
+if ln -sf "$CHOME/gone/rtk" "$CBIN/rtk" 2>/dev/null && [[ -L "$CBIN/rtk" && ! -e "$CBIN/rtk" ]]; then
+  CAN_DANGLE=1
 else
-  bad "reports a dangling rtk symlink" "not in output: $out"
+  CAN_DANGLE=0
+  rm -f "$CBIN/rtk"
 fi
-check "default run does not delete anything" "yes" "$([[ -L "$CBIN/rtk" ]] && echo yes || echo no)"
 
-out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply 2>&1)
-check "--apply removes the dangling symlink" "no" "$([[ -e "$CBIN/rtk" || -L "$CBIN/rtk" ]] && echo yes || echo no)"
+if [[ $CAN_DANGLE -eq 1 ]]; then
+  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1)
+  if grep -q "dangling: $CBIN/rtk" <<<"$out"; then
+    ok "reports a dangling rtk symlink"
+  else
+    bad "reports a dangling rtk symlink" "not in output: $out"
+  fi
+  check "default run does not delete anything" "yes" "$([[ -L "$CBIN/rtk" ]] && echo yes || echo no)"
+
+  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" --apply 2>&1)
+  check "--apply removes the dangling symlink" "no" "$([[ -e "$CBIN/rtk" || -L "$CBIN/rtk" ]] && echo yes || echo no)"
+else
+  skip "reports a dangling rtk symlink" "$SYMLINK_REASON"
+  skip "default run does not delete anything" "$SYMLINK_REASON"
+  skip "--apply removes the dangling symlink" "$SYMLINK_REASON"
+  # The scan must still be harmless where symlinks are not a thing.
+  out=$(env HOME="$CHOME" PATH="$CBIN:$BARE_PATH" bash "$CLEANUP" 2>&1); rc=$?
+  check "scan exits 0 with no symlinks to find" "0" "$rc"
+fi
 
 # A working rtk must survive both modes.
 make_stub "$CBIN" rtk
@@ -247,5 +270,5 @@ else
 fi
 
 echo
-echo "passed: $pass  failed: $fail"
+echo "passed: $pass  failed: $fail  skipped: $skipped"
 [[ $fail -eq 0 ]]

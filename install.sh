@@ -115,6 +115,9 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
   #    still printed OK. See issue #2.
   if command -v jq >/dev/null 2>&1; then
     while IFS= read -r cmd; do
+      # jq.exe writes CRLF to stdout under Git Bash, so every line arrives with
+      # a trailing CR that silently corrupts the hook path we build from it.
+      cmd="${cmd%$'\r'}"
       [[ -z "$cmd" ]] && continue
       read -r head arg1 _ <<<"$cmd"
       hook_path="${head//\~/$HOME}"
@@ -205,6 +208,37 @@ fi
 
 prepare_settings_source
 
+# ── 0. Platform detection ──
+# Git Bash / MSYS2 / Cygwin all report a MINGW*-flavoured uname but download
+# Windows binaries. Recorded once here so every installer step agrees, and so
+# the closing summary can report what actually landed instead of assuming.
+OS_NAME=""
+OS_ARCH=""
+case "$(uname)" in
+  Darwin)                  OS_NAME="darwin" ;;
+  Linux)                   OS_NAME="linux" ;;
+  MINGW*|MSYS*|CYGWIN*)    OS_NAME="windows" ;;
+  *) echo "⚠ Unsupported OS: $(uname). Binary installs will be skipped." ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64)  OS_ARCH="arm64" ;;
+  x86_64|amd64)   OS_ARCH="amd64" ;;
+  *) echo "⚠ Unsupported arch: $(uname -m). Binary installs will be skipped." ;;
+esac
+
+STATUS_HEADROOM="skipped"
+STATUS_RTK="skipped"
+STATUS_CBM="skipped"
+
+# Git for Windows ships no unzip(1); python3 is already a hard dependency.
+extract_zip() { # extract_zip <archive> <dest>
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -qo "$1" -d "$2"
+  else
+    python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$1" "$2"
+  fi
+}
+
 # ── 1. Install Headroom ──
 # Headroom used to vendor RTK; headroomlabs-ai/headroom#2677 (merged 2026-07-31)
 # removed it with no replacement and no cleanup path. RTK is installed on its
@@ -219,9 +253,12 @@ if command -v pip3 >/dev/null 2>&1; then HR_CMD="pip3"
 elif command -v pip  >/dev/null 2>&1; then HR_CMD="pip"
 fi
 if [[ -n "$HR_CMD" ]]; then
-  "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
-    || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null \
-    || echo "  ⚠ pip install failed. Run manually: $HR_CMD install --user 'headroom-ai[all]'"
+  if "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
+     || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null; then
+    STATUS_HEADROOM="ok"
+  else
+    echo "  ⚠ pip install failed. Run manually: $HR_CMD install --user 'headroom-ai[all]'"
+  fi
 else
   echo "  ⚠ pip / pip3 not found — install Python 3 + pip, then run: pip install --user 'headroom-ai[all]'"
 fi
@@ -233,43 +270,73 @@ fi
 echo "→ Installing RTK..."
 if existing_rtk=$("$REPO_DIR/hooks/run-cli-hook" --which rtk 2>/dev/null); then
   echo "  ✓ rtk already resolves → $existing_rtk"
+  STATUS_RTK="ok"
+elif [[ "$OS_NAME" == "windows" ]]; then
+  # Upstream's install.sh rejects MINGW outright, but the release does ship a
+  # Windows build, so fetch that directly.
+  if [[ "$OS_ARCH" != "amd64" ]]; then
+    echo "  ⚠ rtk publishes no Windows $OS_ARCH build. Skipping."
+  else
+    RTK_TMP="$(mktemp -d)"
+    RTK_URL="https://github.com/rtk-ai/rtk/releases/latest/download/rtk-x86_64-pc-windows-msvc.zip"
+    mkdir -p "$HOME/.local/bin"
+    if curl -fsSL "$RTK_URL" -o "$RTK_TMP/rtk.zip" && extract_zip "$RTK_TMP/rtk.zip" "$RTK_TMP"; then
+      rtk_exe="$(find "$RTK_TMP" -name 'rtk.exe' -type f | head -1)"
+      if [[ -n "$rtk_exe" ]]; then
+        mv "$rtk_exe" "$HOME/.local/bin/rtk.exe"
+        chmod +x "$HOME/.local/bin/rtk.exe"
+        echo "  ✓ rtk installed at ~/.local/bin/rtk.exe"
+        STATUS_RTK="ok"
+      else
+        echo "  ⚠ rtk archive extracted but rtk.exe not found"
+      fi
+    else
+      echo "  ⚠ rtk download failed ($RTK_URL)"
+    fi
+    rm -rf "$RTK_TMP"
+  fi
 elif command -v brew >/dev/null 2>&1; then
-  brew install rtk 2>/dev/null \
-    || echo "  ⚠ brew install rtk failed. Run manually: brew install rtk"
+  if brew install rtk 2>/dev/null; then
+    STATUS_RTK="ok"
+  else
+    echo "  ⚠ brew install rtk failed. Run manually: brew install rtk"
+  fi
 else
-  curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh \
-    || echo "  ⚠ rtk install script failed. See https://github.com/rtk-ai/rtk"
+  if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh; then
+    STATUS_RTK="ok"
+  else
+    echo "  ⚠ rtk install script failed. See https://github.com/rtk-ai/rtk"
+  fi
 fi
 
 # ── 2. Install codebase-memory-mcp ──
-# Releases ship as <name>-<os>-<arch>.tar.gz. We download, extract the binary,
-# and drop it in ~/.local/bin (caller is expected to have ~/.local/bin on PATH).
+# Releases ship as <name>-<os>-<arch>.{tar.gz,zip}. We download, extract the
+# binary, and drop it in ~/.local/bin (caller is expected to have ~/.local/bin
+# on PATH).
 echo "→ Installing codebase-memory-mcp..."
-CBM_OS=""
-CBM_ARCH=""
-case "$(uname)" in
-  Darwin) CBM_OS="darwin" ;;
-  Linux)  CBM_OS="linux" ;;
-  *) echo "  ⚠ Unsupported OS: $(uname). Skipping CBM install."; CBM_OS="" ;;
-esac
-case "$(uname -m)" in
-  arm64|aarch64)  CBM_ARCH="arm64" ;;
-  x86_64|amd64)   CBM_ARCH="amd64" ;;
-  *) echo "  ⚠ Unsupported arch: $(uname -m). Skipping CBM install."; CBM_ARCH="" ;;
-esac
-if [[ -n "$CBM_OS" && -n "$CBM_ARCH" ]]; then
-  CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-${CBM_OS}-${CBM_ARCH}.tar.gz"
+if [[ -n "$OS_NAME" && -n "$OS_ARCH" ]]; then
+  if [[ "$OS_NAME" == "windows" ]]; then
+    CBM_EXT="zip"; CBM_BIN="codebase-memory-mcp.exe"
+  else
+    CBM_EXT="tar.gz"; CBM_BIN="codebase-memory-mcp"
+  fi
+  CBM_URL="https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/codebase-memory-mcp-${OS_NAME}-${OS_ARCH}.${CBM_EXT}"
   mkdir -p "$HOME/.local/bin"
   CBM_TMP="$(mktemp -d)"
-  if curl -fsSL "$CBM_URL" -o "$CBM_TMP/cbm.tar.gz"; then
-    tar -xzf "$CBM_TMP/cbm.tar.gz" -C "$CBM_TMP"
-    if [[ -f "$CBM_TMP/codebase-memory-mcp" ]]; then
-      mv "$CBM_TMP/codebase-memory-mcp" "$HOME/.local/bin/codebase-memory-mcp"
-      chmod +x "$HOME/.local/bin/codebase-memory-mcp"
-      "$HOME/.local/bin/codebase-memory-mcp" setup claude-code 2>/dev/null || true
-      echo "  ✓ CBM installed at ~/.local/bin/codebase-memory-mcp"
+  if curl -fsSL "$CBM_URL" -o "$CBM_TMP/cbm.$CBM_EXT"; then
+    if [[ "$CBM_EXT" == "zip" ]]; then
+      extract_zip "$CBM_TMP/cbm.zip" "$CBM_TMP" 2>/dev/null || true
     else
-      echo "  ⚠ CBM tarball extracted but binary not found — open an issue at the repo"
+      tar -xzf "$CBM_TMP/cbm.tar.gz" -C "$CBM_TMP"
+    fi
+    if [[ -f "$CBM_TMP/$CBM_BIN" ]]; then
+      mv "$CBM_TMP/$CBM_BIN" "$HOME/.local/bin/$CBM_BIN"
+      chmod +x "$HOME/.local/bin/$CBM_BIN"
+      "$HOME/.local/bin/$CBM_BIN" setup claude-code 2>/dev/null || true
+      echo "  ✓ CBM installed at ~/.local/bin/$CBM_BIN"
+      STATUS_CBM="ok"
+    else
+      echo "  ⚠ CBM archive extracted but $CBM_BIN not found — open an issue at the repo"
     fi
   else
     echo "  ⚠ CBM download failed ($CBM_URL). Skip and run manually later."
@@ -626,9 +693,15 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "What was installed:"
-echo "  ✓ Headroom (API-layer compression)"
-echo "  ✓ RTK (shell-command compression, installed independently of Headroom)"
-echo "  ✓ codebase-memory-mcp (knowledge graph for code)"
+report_component() { # report_component <status> <label> <remedy>
+  if [[ "$1" == "ok" ]]; then echo "  ✓ $2"; else echo "  ✗ $2 — not installed. $3"; fi
+}
+report_component "$STATUS_HEADROOM" "Headroom (API-layer compression)" \
+  "Run: pip install --user 'headroom-ai[all]'"
+report_component "$STATUS_RTK" "RTK (shell-command compression, independent of Headroom)" \
+  "See https://github.com/rtk-ai/rtk"
+report_component "$STATUS_CBM" "codebase-memory-mcp (knowledge graph for code)" \
+  "See https://github.com/DeusData/codebase-memory-mcp/releases"
 echo "  ✓ context-mode plugin (output virtualization)"
 if [[ "$INSTALL_CAVEMAN" -eq 1 ]]; then
   echo "  ✓ Caveman plugin (compressed Claude output)"

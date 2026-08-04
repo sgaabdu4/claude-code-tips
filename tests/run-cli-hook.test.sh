@@ -321,6 +321,26 @@ else
   ok "no stale 'Headroom bundles RTK' claim"
 fi
 
+# Issue #5: `pip install --user` is refused inside an externally-managed
+# environment, so both the attempt and the "run it manually" advice failed for
+# anyone on Homebrew Python or Debian. pipx is the supported route.
+if grep -qE '^[[:space:]]*(el)?if command -v pipx' "$REPO_DIR/install.sh"; then
+  ok "installer prefers pipx for Headroom"
+else
+  bad "installer prefers pipx for Headroom" "no pipx branch found"
+fi
+if grep -q "existing_hr=\$(command -v headroom" "$REPO_DIR/install.sh"; then
+  ok "reuses an already-installed headroom instead of reporting it missing"
+else
+  bad "reuses an already-installed headroom instead of reporting it missing" "no reuse check"
+fi
+bad_advice=$(grep -nE "Run manually: .*pip install --user|Run: pip install" "$REPO_DIR/install.sh")
+if [[ -z "$bad_advice" ]]; then
+  ok "no remedy text suggests a pip command PEP 668 will refuse"
+else
+  bad "no remedy text suggests a pip command PEP 668 will refuse" "$bad_advice"
+fi
+
 # Every long-running child must have stdin closed. `codebase-memory-mcp setup
 # claude-code` starts the MCP server and reads stdin forever; inheriting a live
 # stdin hung the installer with no output. Same hazard for `claude plugin`.

@@ -32,7 +32,7 @@ git clone https://github.com/sgaabdu4/claude-code-tips.git
 cd claude-code-tips && chmod +x install.sh && ./install.sh
 ```
 
-Sanity-checks `git`/`curl`/`jq`/`python3` upfront. Installs Headroom (`pip install --user`), RTK (Homebrew, or the rtk-ai install script), CBM binary, context-mode + Caveman plugins via `claude plugin install`, hooks, slash commands, statusline, settings, shell wrapper for your `$SHELL`. **Idempotent** — re-run anytime.
+Sanity-checks `git`/`curl`/`jq`/`python3` upfront. Installs Headroom (`pipx`, falling back to `pip --user`), RTK (Homebrew, or the rtk-ai install script), CBM binary, context-mode + Caveman plugins via `claude plugin install`, hooks, slash commands, statusline, settings, shell wrapper for your `$SHELL`. **Idempotent** — re-run anytime.
 
 ### Power-user flags
 

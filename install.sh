@@ -246,24 +246,34 @@ extract_zip() { # extract_zip <archive> <dest>
 # Headroom used to vendor RTK; headroomlabs-ai/headroom#2677 (merged 2026-07-31)
 # removed it with no replacement and no cleanup path. RTK is installed on its
 # own below.
-# `--user` keeps us off the system Python and dodges PEP 668
-# "externally-managed-environment" errors on Homebrew Python 3.11+ /
-# Debian-flavour distros. Falls back to plain pip if --user is unsupported
-# (e.g. a venv where --user makes no sense).
+# pipx first. `--user` does NOT dodge PEP 668 as previously assumed here: pip
+# refuses an externally-managed environment whether or not --user is passed, so
+# on Homebrew Python 3.11+ and Debian-flavour distros the pip path fails and the
+# advice to retry it by hand fails identically. Reported in issue #5.
 echo "→ Installing Headroom..."
-HR_CMD=""
-if command -v pip3 >/dev/null 2>&1; then HR_CMD="pip3"
-elif command -v pip  >/dev/null 2>&1; then HR_CMD="pip"
-fi
-if [[ -n "$HR_CMD" ]]; then
-  if "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
-     || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null; then
+if existing_hr=$(command -v headroom 2>/dev/null); then
+  echo "  ✓ headroom already resolves → $existing_hr"
+  STATUS_HEADROOM="ok"
+elif command -v pipx >/dev/null 2>&1; then
+  if pipx install "headroom-ai[all]" 2>/dev/null; then
     STATUS_HEADROOM="ok"
   else
-    echo "  ⚠ pip install failed. Run manually: $HR_CMD install --user 'headroom-ai[all]'"
+    echo "  ⚠ pipx install failed. Run manually: pipx install 'headroom-ai[all]'"
   fi
 else
-  echo "  ⚠ pip / pip3 not found — install Python 3 + pip, then run: pip install --user 'headroom-ai[all]'"
+  HR_CMD=""
+  if command -v pip3 >/dev/null 2>&1; then HR_CMD="pip3"
+  elif command -v pip  >/dev/null 2>&1; then HR_CMD="pip"
+  fi
+  # Plain install after --user for a venv, where --user makes no sense.
+  if [[ -n "$HR_CMD" ]] \
+     && { "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
+          || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null; }; then
+    STATUS_HEADROOM="ok"
+  else
+    echo "  ⚠ Could not install Headroom. pipx is the supported route:"
+    echo "      pipx install 'headroom-ai[all]'"
+  fi
 fi
 
 # ── 1b. Install RTK ──
@@ -746,7 +756,7 @@ report_component() { # report_component <status> <label> <remedy>
   if [[ "$1" == "ok" ]]; then echo "  ✓ $2"; else echo "  ✗ $2 — not installed. $3"; fi
 }
 report_component "$STATUS_HEADROOM" "Headroom (API-layer compression)" \
-  "Run: pip install --user 'headroom-ai[all]'"
+  "Run: pipx install 'headroom-ai[all]'"
 report_component "$STATUS_RTK" "RTK (shell-command compression, independent of Headroom)" \
   "See https://github.com/rtk-ai/rtk"
 report_component "$STATUS_CBM" "codebase-memory-mcp (knowledge graph for code)" \

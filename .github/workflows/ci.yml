@@ -1,4 +1,4 @@
-name: windows
+name: ci
 
 on:
   push:
@@ -9,13 +9,19 @@ on:
       - 'bin/**'
       - 'tests/**'
       - 'settings/**'
-      - '.github/workflows/windows.yml'
+      - 'commands/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  gitbash:
-    name: Git Bash (windows-latest)
-    runs-on: windows-latest
+  stack:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
     defaults:
       run:
         shell: bash
@@ -23,44 +29,48 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Environment
-        continue-on-error: true
         run: |
           echo "uname:    $(uname)"
           echo "uname -m: $(uname -m)"
           echo "bash:     $BASH_VERSION"
-          echo "HOME:     $HOME"
-          for t in git curl jq python3 python node npm; do
+          for t in git curl jq python3 unzip node npm brew; do
             printf '%-8s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
-          echo "PATH separator test:"
-          case "$PATH" in *';'*) echo "  semicolon-separated";; *) echo "  colon-separated";; esac
 
       - name: install.sh --check
-        continue-on-error: true
         run: ./install.sh --check
 
       - name: test suite
-        continue-on-error: true
         run: ./tests/run-cli-hook.test.sh
 
       - name: cleanup-rtk-artifacts (report only)
-        continue-on-error: true
         run: ./bin/cleanup-rtk-artifacts.sh
 
-      - name: run-cli-hook resolves a .exe
-        continue-on-error: true
+      # Windows binaries carry a .exe suffix the resolver never appends. MSYS
+      # path emulation covers it, but the whole point is not to assume.
+      - name: run-cli-hook resolves an .exe
+        if: runner.os == 'Windows'
         run: |
-          # Windows binaries carry an extension; the resolver never appends one.
           mkdir -p "$HOME/.local/bin"
           printf '#!/bin/bash\necho ran-stub\n' > "$HOME/.local/bin/cct-probe.exe"
           chmod +x "$HOME/.local/bin/cct-probe.exe"
-          echo "--which cct-probe:"
-          ./hooks/run-cli-hook --which cct-probe && echo "  resolved" || echo "  NOT resolved"
+          ./hooks/run-cli-hook --which cct-probe
 
       - name: full install (no shell wrapper)
-        continue-on-error: true
         run: ./install.sh --no-shell-wrapper --no-caveman
 
+      - name: installed components really landed
+        run: |
+          fail=0
+          for b in rtk codebase-memory-mcp; do
+            if p=$(./hooks/run-cli-hook --which "$b"); then
+              echo "  ok   - $b → $p"
+            else
+              echo "  FAIL - $b not resolvable after install"; fail=1
+            fi
+          done
+          # Guards the class of bug where the summary ticks something absent.
+          exit $fail
+
       - name: post-install --check
-        continue-on-error: true
         run: ./install.sh --check

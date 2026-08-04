@@ -1,0 +1,66 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'hooks/**'
+      - 'bin/**'
+      - 'tests/**'
+      - 'settings/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+jobs:
+  gitbash:
+    name: Git Bash (windows-latest)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Environment
+        continue-on-error: true
+        run: |
+          echo "uname:    $(uname)"
+          echo "uname -m: $(uname -m)"
+          echo "bash:     $BASH_VERSION"
+          echo "HOME:     $HOME"
+          for t in git curl jq python3 python node npm; do
+            printf '%-8s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+          echo "PATH separator test:"
+          case "$PATH" in *';'*) echo "  semicolon-separated";; *) echo "  colon-separated";; esac
+
+      - name: install.sh --check
+        continue-on-error: true
+        run: ./install.sh --check
+
+      - name: test suite
+        continue-on-error: true
+        run: ./tests/run-cli-hook.test.sh
+
+      - name: cleanup-rtk-artifacts (report only)
+        continue-on-error: true
+        run: ./bin/cleanup-rtk-artifacts.sh
+
+      - name: run-cli-hook resolves a .exe
+        continue-on-error: true
+        run: |
+          # Windows binaries carry an extension; the resolver never appends one.
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/bash\necho ran-stub\n' > "$HOME/.local/bin/cct-probe.exe"
+          chmod +x "$HOME/.local/bin/cct-probe.exe"
+          echo "--which cct-probe:"
+          ./hooks/run-cli-hook --which cct-probe && echo "  resolved" || echo "  NOT resolved"
+
+      - name: full install (no shell wrapper)
+        continue-on-error: true
+        run: ./install.sh --no-shell-wrapper --no-caveman
+
+      - name: post-install --check
+        continue-on-error: true
+        run: ./install.sh --check

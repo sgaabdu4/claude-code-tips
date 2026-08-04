@@ -30,11 +30,12 @@ dir_short=$(echo "$dir_full" | awk -F'/' '{
 }')
 raw_model=$(echo "$input" | jq -r '.model.display_name // ""')
 
-# Shorten: "Claude Sonnet 4.6" → "s4.6", "Claude Opus 4.7" → "o4.7", etc.
+# Shorten: "Claude Sonnet 4.6" → "s4.6", "Claude Opus 5" → "o5", etc. The minor
+# is optional: Opus 5 dropped it, and requiring a dot printed the whole name.
 model=""
 if [ -n "$raw_model" ]; then
   prefix=$(echo "$raw_model" | grep -ioE 'Haiku|Sonnet|Opus' | head -1 | cut -c1 | tr '[:upper:]' '[:lower:]')
-  version=$(echo "$raw_model" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
+  version=$(echo "$raw_model" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)
   [ -n "$prefix" ] && [ -n "$version" ] && model="${prefix}${version}"
   [ -z "$model" ] && model="$raw_model"
 fi

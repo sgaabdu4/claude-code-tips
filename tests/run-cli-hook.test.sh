@@ -247,6 +247,12 @@ if grep -q 'bypass the shim' <<<"$out"; then
 else
   bad "flags a settings.json hook that calls rtk directly" "output: $out"
 fi
+# Reported in issue #2: word splitting turned one command into three "hooks".
+if grep -q '^    rtk hook claude$' <<<"$out"; then
+  ok "prints the offending command whole, not word-split"
+else
+  bad "prints the offending command whole, not word-split" "output: $out"
+fi
 
 # ...and must not flag the shimmed form we ship.
 cat > "$CHOME/.claude/settings.json" <<'JSON'

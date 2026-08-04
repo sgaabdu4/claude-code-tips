@@ -63,7 +63,11 @@ if [[ -f "$settings" ]] && command -v jq >/dev/null 2>&1; then
                  | select(test("run-cli-hook") | not)' "$settings" 2>/dev/null | tr -d '\r')
   if [[ -n "$stale" ]]; then
     echo "  these bypass the shim and will break again if rtk moves:"
-    printf '    %s\n' $stale
+    # One command per line. Unquoted expansion split `rtk hook claude` into
+    # three bogus entries, which read as three separate broken hooks.
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && echo "    $line"
+    done <<<"$stale"
     echo "  fix: re-run ./install.sh to route them through hooks/run-cli-hook"
   else
     echo "  none found"

@@ -345,7 +345,7 @@ fi
 # claude-code` starts the MCP server and reads stdin forever; inheriting a live
 # stdin hung the installer with no output. Same hazard for `claude plugin`.
 # Anchored: the same strings appear inside echo'd "run this manually" hints.
-stdin_leaks=$(grep -nE '^[[:space:]]*("\$HOME/\.local/bin/\$CBM_BIN" setup|claude plugin )' \
+stdin_leaks=$(grep -nE '^[[:space:]]*(if |&& \{ |\|\| )?("\$HOME/\.local/bin/\$CBM_BIN" setup|"\$HR_CMD" install|claude plugin |npm install -g |brew install |pipx install |pip3? install )' \
               "$REPO_DIR/install.sh" | grep -v '</dev/null')
 if [[ -z "$stdin_leaks" ]]; then
   ok "installer closes stdin on every blocking child"

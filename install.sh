@@ -255,7 +255,7 @@ if existing_hr=$(command -v headroom 2>/dev/null); then
   echo "  ✓ headroom already resolves → $existing_hr"
   STATUS_HEADROOM="ok"
 elif command -v pipx >/dev/null 2>&1; then
-  if pipx install "headroom-ai[all]" 2>/dev/null; then
+  if pipx install "headroom-ai[all]" </dev/null 2>/dev/null; then
     STATUS_HEADROOM="ok"
   else
     echo "  ⚠ pipx install failed. Run manually: pipx install 'headroom-ai[all]'"
@@ -267,8 +267,8 @@ else
   fi
   # Plain install after --user for a venv, where --user makes no sense.
   if [[ -n "$HR_CMD" ]] \
-     && { "$HR_CMD" install --user "headroom-ai[all]" 2>/dev/null \
-          || "$HR_CMD" install "headroom-ai[all]" 2>/dev/null; }; then
+     && { "$HR_CMD" install --user "headroom-ai[all]" </dev/null 2>/dev/null \
+          || "$HR_CMD" install "headroom-ai[all]" </dev/null 2>/dev/null; }; then
     STATUS_HEADROOM="ok"
   else
     echo "  ⚠ Could not install Headroom. pipx is the supported route:"
@@ -309,7 +309,7 @@ elif [[ "$OS_NAME" == "windows" ]]; then
     rm -rf "$RTK_TMP"
   fi
 elif command -v brew >/dev/null 2>&1; then
-  if brew install rtk 2>/dev/null; then
+  if brew install rtk </dev/null 2>/dev/null; then
     STATUS_RTK="ok"
   else
     echo "  ⚠ brew install rtk failed. Run manually: brew install rtk"
@@ -406,7 +406,7 @@ if existing_cm=$("$REPO_DIR/hooks/run-cli-hook" --which context-mode 2>/dev/null
   echo "  ✓ context-mode already resolves → $existing_cm"
   echo "    Skipping 'npm install -g' so we don't create a shadowed second copy."
 elif command -v npm >/dev/null 2>&1; then
-  npm install -g context-mode 2>/dev/null \
+  npm install -g context-mode </dev/null 2>/dev/null \
     || echo "  ⚠ npm install -g context-mode failed — run manually after this script."
 else
   echo "  ⚠ npm not found — install Node.js (https://nodejs.org), then 'npm install -g context-mode'."
@@ -415,7 +415,7 @@ fi
 # ── 4. Install tvly CLI (Tavily search/extract) ──
 echo "→ Installing tvly CLI..."
 if command -v npm >/dev/null 2>&1; then
-  npm install -g tavily-cli 2>/dev/null \
+  npm install -g tavily-cli </dev/null 2>/dev/null \
     || echo "  ⚠ npm install -g tavily-cli failed — run manually after this script."
 else
   echo "  ⚠ npm not found — install Node.js (https://nodejs.org), then 'npm install -g tavily-cli'."

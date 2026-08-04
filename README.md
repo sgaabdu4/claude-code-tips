@@ -21,7 +21,9 @@ Every push runs the full installer end to end on macOS, Linux and Windows, then 
 | Windows via **Git Bash** | Supported. `install.sh` fetches the Windows builds of RTK and CBM, which their own installers skip |
 | Windows via WSL2 | Treated as Linux, so it should work, but nothing runs it in CI |
 
-Two Windows caveats worth knowing before you rely on it. The shell wrapper is only exercised with `--no-shell-wrapper` in CI, so aliasing `claude` on Windows is unverified. And CI proves the hooks run under Git Bash, not that a native Windows install of Claude Code can spawn an extensionless bash script through cmd. If you're on Windows, running Claude Code inside WSL2 or Git Bash is the path that's actually been tested.
+On Windows the installer rewrites every hook command to an absolute `bash.exe` plus an absolute script path, because a native Claude Code is a Node process and can spawn hooks through `cmd.exe`, which expands neither `~` nor a shebang. CI asserts all 18 installed commands resolve under `cmd.exe` and Git Bash alike. It pins the full path rather than a bare `bash` on purpose: `C:\Windows\System32\bash.exe` is the WSL launcher and often sits ahead of Git's on `PATH`, which would run your hooks against a different filesystem.
+
+One caveat left. The shell wrapper is only exercised as `--no-shell-wrapper` in CI, so aliasing `claude` on Windows is still unverified.
 
 ## Install
 

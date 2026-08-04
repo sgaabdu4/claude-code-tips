@@ -642,7 +642,7 @@ fi
 echo "  5. Re-run './install.sh --check' anytime to validate config"
 echo ""
 echo "Repos:"
-echo "  Headroom:  https://github.com/chopratejas/headroom"
+echo "  Headroom:  https://github.com/headroomlabs-ai/headroom"
 echo "  CBM:       https://github.com/DeusData/codebase-memory-mcp"
 echo "  ctx-mode:  https://github.com/mksglu/context-mode"
 echo "  Caveman:   https://github.com/JuliusBrussee/caveman"

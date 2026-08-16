@@ -6,12 +6,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   issues: read
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   maintain:
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}

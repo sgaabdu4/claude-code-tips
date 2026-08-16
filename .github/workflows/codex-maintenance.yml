@@ -20,9 +20,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       OWNER_LOGIN: ${{ github.repository_owner }}
-      GMAIL_USERNAME: ${{ vars.CODEX_GMAIL_USERNAME }}
-      GMAIL_TO: ${{ vars.CODEX_GMAIL_TO }}
-      GMAIL_APP_PASSWORD: ${{ secrets.CODEX_GMAIL_APP_PASSWORD }}
     steps:
       - name: Queue Dependabot pull requests
         shell: bash
@@ -92,6 +89,10 @@ jobs:
 
       - name: Email open issues not created by the owner
         shell: bash
+        env:
+          GMAIL_USERNAME: ${{ vars.CODEX_GMAIL_USERNAME }}
+          GMAIL_TO: ${{ vars.CODEX_GMAIL_TO }}
+          GMAIL_APP_PASSWORD: ${{ secrets.CODEX_GMAIL_APP_PASSWORD }}
         run: |
           set -euo pipefail
           count=$(jq 'length' issues-report.json)

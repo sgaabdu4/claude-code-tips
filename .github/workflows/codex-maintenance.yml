@@ -20,6 +20,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       OWNER_LOGIN: ${{ github.repository_owner }}
+      GMAIL_USERNAME: ${{ vars.CODEX_GMAIL_USERNAME }}
+      GMAIL_TO: ${{ vars.CODEX_GMAIL_TO }}
+      GMAIL_APP_PASSWORD: ${{ secrets.CODEX_GMAIL_APP_PASSWORD }}
     steps:
       - name: Queue Dependabot pull requests
         shell: bash
@@ -86,6 +89,62 @@ jobs:
             echo "Count: $(jq 'length' "$issues")"
             jq -r '.[0:50][] | "- #\(.number) \(.title) (@\(.author)) \(.url)"' "$issues"
           } >> dependabot-report.md
+
+      - name: Email open issues not created by the owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(jq 'length' issues-report.json)
+          if [ "$count" -eq 0 ]; then
+            echo "No open issues not created by $OWNER_LOGIN; no email sent." >> dependabot-report.md
+            exit 0
+          fi
+          if [ -z "$GMAIL_USERNAME" ] || [ -z "$GMAIL_TO" ] || [ -z "$GMAIL_APP_PASSWORD" ]; then
+            echo "Found $count open issue(s), but Gmail is not configured; no email sent." >> dependabot-report.md
+            exit 0
+          fi
+
+          export REPORT_REPOSITORY="$GITHUB_REPOSITORY"
+          export REPORT_OWNER="$OWNER_LOGIN"
+          python3 - issues-report.json <<'PY'
+          import json
+          import os
+          import smtplib
+          import sys
+          from email.message import EmailMessage
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as handle:
+              issues = json.load(handle)
+
+          lines = [
+              f"Open GitHub issues not created by {os.environ['REPORT_OWNER']}",
+              f"Repository: {os.environ['REPORT_REPOSITORY']}",
+              f"Count: {len(issues)}",
+              "",
+          ]
+          for issue in issues:
+              lines.append(
+                  f"#{issue['number']} {issue['title']} (@{issue['author']}) {issue['url']}"
+              )
+
+          message = EmailMessage()
+          message["Subject"] = (
+              f"GitHub issues: {os.environ['REPORT_REPOSITORY']} ({len(issues)})"
+          )
+          message["From"] = os.environ["GMAIL_USERNAME"]
+          message["To"] = os.environ["GMAIL_TO"]
+          message.set_content("\n".join(lines))
+
+          password = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
+          with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:
+              smtp.ehlo()
+              smtp.starttls()
+              smtp.ehlo()
+              smtp.login(os.environ["GMAIL_USERNAME"], password)
+              smtp.send_message(message)
+          PY
+          echo "Emailed $count open issue(s) to $GMAIL_TO." >> dependabot-report.md
 
       - name: Bump the root project version after merged Dependabot updates
         shell: bash

@@ -1,0 +1,239 @@
+name: Codex maintenance
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: write
+
+jobs:
+  maintain:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER_LOGIN: sgaabdu4
+    steps:
+      - name: Queue Dependabot pull requests
+        shell: bash
+        run: |
+          set -uo pipefail
+          repo="$GITHUB_REPOSITORY"
+          report="dependabot-report.md"
+          : > "$report"
+          default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
+          if [ "$default_branch" != "main" ] && [ "$default_branch" != "master" ]; then
+            echo "Skipped Dependabot merging because the default branch is $default_branch, not main or master." >> "$report"
+            exit 0
+          fi
+
+          mapfile -t prs < <(
+            gh api --paginate "/repos/$repo/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.user.login == "dependabot[bot]") | .number'
+          )
+          queued=0
+          blocked=0
+          {
+            echo "### Dependabot pull requests"
+            echo ""
+            echo "Found ${#prs[@]} open Dependabot pull request(s)."
+          } >> "$report"
+
+          for pr in "${prs[@]}"; do
+            title=$(gh pr view "$pr" --repo "$repo" --json title --jq .title)
+            if output=$(gh pr merge "$pr" --repo "$repo" --auto --squash 2>&1); then
+              queued=$((queued + 1))
+              echo "- queued #$pr: $title" >> "$report"
+            else
+              blocked=$((blocked + 1))
+              echo "- could not queue #$pr: $title" >> "$report"
+              echo '```' >> "$report"
+              echo "$output" >> "$report"
+              echo '```' >> "$report"
+            fi
+          done
+
+          {
+            echo ""
+            echo "Auto-merge requested: $queued"
+            echo "Needs repository settings or another machine credential: $blocked"
+          } >> "$report"
+
+      - name: Record open issues not created by the owner
+        shell: bash
+        run: |
+          set -uo pipefail
+          repo="$GITHUB_REPOSITORY"
+          issues="issues-report.json"
+          gh api --paginate "/repos/$repo/issues?state=open&per_page=100" \
+            | jq -s --arg owner "$OWNER_LOGIN" '[add[]
+                | select(.pull_request == null)
+                | select(.user.login != $owner)
+                | {number, title, author: .user.login, updated_at, url: .html_url}]' > "$issues"
+
+          {
+            echo "### Open issues not created by $OWNER_LOGIN"
+            echo ""
+            echo "Count: $(jq 'length' "$issues")"
+            jq -r '.[] | "- #\(.number) \(.title) (@\(.author)) \(.url)"' "$issues" | head -n 50
+          } >> dependabot-report.md
+
+      - name: Bump the root project version after merged Dependabot updates
+        shell: bash
+        run: |
+          set -uo pipefail
+          repo="$GITHUB_REPOSITORY"
+          default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)
+          if [ "$default_branch" != "main" ] && [ "$default_branch" != "master" ]; then
+            echo "Skipped version bump because the default branch is $default_branch, not main or master." >> dependabot-report.md
+            cat dependabot-report.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cutoff=$(date -u -d '7 days ago' +%Y-%m-%d)
+          merged=$(gh api --paginate "/repos/$repo/pulls?state=closed&sort=updated&direction=desc&per_page=100")
+          recent_messages=$(gh api --paginate "/repos/$repo/commits?sha=$default_branch&per_page=100" --jq '.[].commit.message' || true)
+
+          while IFS=$'\t' read -r pr merged_at; do
+            [ -n "$pr" ] || continue
+            marker="Dependabot PR #$pr"
+            if printf '%s\n' "$recent_messages" | grep -Fq "$marker"; then
+              continue
+            fi
+
+            changed=$(gh api --paginate "/repos/$repo/pulls/$pr/files?per_page=100" --jq '.[].filename' || true)
+            version_path=""
+            for candidate in package.json pubspec.yaml pyproject.toml Cargo.toml composer.json VERSION version.txt VERSION.txt; do
+              if printf '%s\n' "$changed" | grep -Fxq "$candidate"; then
+                version_path="$candidate"
+                break
+              fi
+            done
+            if [ -n "$version_path" ]; then
+              echo "Dependabot PR #$pr already changed $version_path" >> dependabot-report.md
+              continue
+            fi
+
+            file_json=""
+            for candidate in package.json pubspec.yaml pyproject.toml Cargo.toml composer.json VERSION version.txt VERSION.txt; do
+              if value=$(gh api "/repos/$repo/contents/$candidate?ref=$default_branch" 2>/dev/null); then
+                file_json="$value"
+                version_path="$candidate"
+                break
+              fi
+            done
+            if [ -z "$version_path" ]; then
+              echo "Dependabot PR #$pr: no supported root version file" >> dependabot-report.md
+              continue
+            fi
+
+            file_sha=$(printf '%s' "$file_json" | jq -r .sha)
+            original=$(printf '%s' "$file_json" | jq -r .content | tr -d '\n' | base64 -d)
+            if ! updated=$(ORIGINAL_CONTENT="$original" python3 - "$version_path" <<'PY'
+          import re
+          import os
+          import sys
+
+          path = sys.argv[1]
+          text = os.environ["ORIGINAL_CONTENT"]
+          semver = r"(\d+)\.(\d+)\.(\d+)"
+
+          def bump(match):
+              return f"{match.group(1)}.{match.group(2)}.{int(match.group(3)) + 1}"
+
+          if path == "VERSION" or path == "version.txt" or path == "VERSION.txt":
+              match = re.fullmatch(r"\s*" + semver + r"\s*\n?", text)
+              if not match:
+                  raise SystemExit(2)
+              print(bump(match))
+          elif path == "pubspec.yaml":
+              pattern = r'(^version:\s*)' + semver + r'(\+\d+)?(\s*$)'
+              match = re.search(pattern, text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(2)
+              replacement = match.group(1) + bump(re.search(semver, match.group(0))) + (match.group(5) or "") + match.group(6)
+              print(text[:match.start()] + replacement + text[match.end():], end="")
+          else:
+              patterns = {
+                  "package.json": r'("version"\s*:\s*")' + semver + r'(")',
+                  "pyproject.toml": r'(^version\s*=\s*")' + semver + r'(")',
+                  "Cargo.toml": r'(^version\s*=\s*")' + semver + r'(")',
+                  "composer.json": r'("version"\s*:\s*")' + semver + r'(")',
+              }
+              match = re.search(patterns[path], text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(2)
+              replacement = match.group(1) + bump(re.search(semver, match.group(0))) + match.group(5)
+              print(text[:match.start()] + replacement + text[match.end():], end="")
+          PY
+            ); then
+              echo "Dependabot PR #$pr: unsupported version format in $version_path" >> dependabot-report.md
+              continue
+            fi
+
+            encoded=$(printf '%s' "$updated" | base64 -w0)
+            commit_message="chore: bump project version after $marker"
+            if gh api --method PUT "/repos/$repo/contents/$version_path" \
+              -f message="$commit_message" \
+              -f content="$encoded" \
+              -f sha="$file_sha" \
+              -f branch="$default_branch" >/dev/null; then
+              echo "Dependabot PR #$pr: bumped $version_path on $default_branch" >> dependabot-report.md
+              recent_messages="$recent_messages\n$commit_message"
+              continue
+            fi
+
+            branch="codex/maintenance/version-$pr"
+            base_sha=$(gh api "/repos/$repo/git/ref/heads/$default_branch" --jq .object.sha 2>/dev/null || true)
+            if [ -z "$base_sha" ]; then
+              echo "Dependabot PR #$pr: could not read $default_branch for a version branch" >> dependabot-report.md
+              continue
+            fi
+            if ! gh api "/repos/$repo/git/ref/heads/$branch" >/dev/null 2>&1; then
+              if ! gh api --method POST "/repos/$repo/git/refs" \
+                -f ref="refs/heads/$branch" -f sha="$base_sha" >/dev/null; then
+                echo "Dependabot PR #$pr: could not create $branch" >> dependabot-report.md
+                continue
+              fi
+            fi
+
+            branch_file=$(gh api "/repos/$repo/contents/$version_path?ref=$branch" 2>/dev/null || true)
+            branch_sha=$(printf '%s' "$branch_file" | jq -r .sha 2>/dev/null || true)
+            branch_original=$(printf '%s' "$branch_file" | jq -r .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null || true)
+            if [ "$branch_original" != "$updated" ]; then
+              branch_encoded=$(printf '%s' "$updated" | base64 -w0)
+              if ! gh api --method PUT "/repos/$repo/contents/$version_path" \
+                -f message="$commit_message" \
+                -f content="$branch_encoded" \
+                -f sha="$branch_sha" \
+                -f branch="$branch" >/dev/null; then
+                echo "Dependabot PR #$pr: could not update $version_path on $branch" >> dependabot-report.md
+                continue
+              fi
+            fi
+
+            version_pr=$(gh pr list --repo "$repo" --head "$branch" --state open --json number --jq '.[0].number // empty')
+            if [ -z "$version_pr" ]; then
+              gh pr create --repo "$repo" --head "$branch" --base "$default_branch" \
+                --title "$commit_message" \
+                --body "Bump the root project version after merged Dependabot PR #$pr." >/dev/null 2>&1 || true
+              version_pr=$(gh pr list --repo "$repo" --head "$branch" --state open --json number --jq '.[0].number // empty')
+            fi
+            if [ -n "$version_pr" ] && gh pr merge "$version_pr" --repo "$repo" --auto --squash >/dev/null 2>&1; then
+              echo "Dependabot PR #$pr: opened or updated #$version_pr for $version_path and requested auto-merge" >> dependabot-report.md
+            else
+              echo "Dependabot PR #$pr: version PR for $version_path needs repository settings or review" >> dependabot-report.md
+            fi
+          done < <(
+            printf '%s' "$merged" | jq -r --arg cutoff "$cutoff" '
+              .[]
+              | select(.user.login == "dependabot[bot]")
+              | select(.merged_at != null)
+              | select(.merged_at >= $cutoff)
+              | [.number, .merged_at]
+              | @tsv'
+          )
+
+          cat dependabot-report.md >> "$GITHUB_STEP_SUMMARY"

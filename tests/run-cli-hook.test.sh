@@ -39,6 +39,12 @@ STUB
 
 # Minimal PATH = what a GUI-launched Claude Code actually hands a hook. No
 # ~/.local/bin, no ~/.headroom/bin, no homebrew.
+#
+# These are real dirs on the host, so any case that asserts a *probe dir* wins
+# must probe under a name that cannot be installed there. `npm install -g` with
+# an npm prefix of /usr drops real binaries straight into /usr/bin, and the shim
+# checks PATH before the probe list by design (case 4), so a real name would
+# resolve to the host's own copy and never reach the stub. Reported in issue #6.
 BARE_PATH="/usr/bin:/bin"
 
 echo "=== run-cli-hook ==="
@@ -46,10 +52,10 @@ echo "=== run-cli-hook ==="
 # 1. The reported bug: rtk in ~/.headroom/bin, absent from PATH. Before the fix
 #    settings.json ran bare `rtk` here and Claude Code raised
 #    "rtk: No such file or directory (os error 2)".
-make_stub "$SANDBOX/.headroom/bin" rtk
-out=$(echo '{"tool_name":"Bash"}' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" rtk hook claude 2>&1)
+make_stub "$SANDBOX/.headroom/bin" cctrtk
+out=$(echo '{"tool_name":"Bash"}' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" cctrtk hook claude 2>&1)
 check "resolves rtk from ~/.headroom/bin when PATH lacks it" \
-      'ran:rtk args:hook claude stdin:{"tool_name":"Bash"}' "$out"
+      'ran:cctrtk args:hook claude stdin:{"tool_name":"Bash"}' "$out"
 
 # 1b. Issue #2, second report: ~/.headroom/bin/rtk existed, was executable and
 #     was not a dangling symlink, so --which called it resolved — but its
@@ -96,10 +102,10 @@ else
 fi
 
 # 2. Same for pip --user / npm -g style installs.
-make_stub "$SANDBOX/.local/bin" context-mode
-out=$(echo 'payload' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" context-mode hook claude-code pretooluse 2>&1)
+make_stub "$SANDBOX/.local/bin" cct-context-mode
+out=$(echo 'payload' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" cct-context-mode hook claude-code pretooluse 2>&1)
 check "resolves context-mode from ~/.local/bin" \
-      'ran:context-mode args:hook claude-code pretooluse stdin:payload' "$out"
+      'ran:cct-context-mode args:hook claude-code pretooluse stdin:payload' "$out"
 
 # 3. Missing binary must not block the tool call: silent, exit 0.
 out=$(echo 'x' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" definitely-not-installed hook 2>&1)
@@ -122,8 +128,8 @@ out=$(echo '' | env -i HOME="$SANDBOX" PATH="$BARE_PATH" CCT_CONTEXT_MODE_BIN="$
 check "CCT_CONTEXT_MODE_BIN maps from context-mode" 'ran:rtk args:y stdin:' "$out"
 
 # 7. --which, used by install.sh --check.
-out=$(env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" --which rtk 2>&1)
-check "--which prints resolved path" "$SANDBOX/.headroom/bin/rtk" "$out"
+out=$(env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" --which cctrtk 2>&1)
+check "--which prints resolved path" "$SANDBOX/.headroom/bin/cctrtk" "$out"
 env -i HOME="$SANDBOX" PATH="$BARE_PATH" "$SHIM" --which definitely-not-installed >/dev/null 2>&1
 check "--which exits 1 when unresolvable" "1" "$?"
 
@@ -168,6 +174,13 @@ missing=$(jq -r '[.. | objects | select(.command? != null) | .command] | .[]' "$
   | awk '{print $1}' | grep '^~/.claude/hooks/' | sed 's|^~/.claude/hooks/||' \
   | while read -r h; do [[ -f "$REPO_DIR/hooks/$h" ]] || echo "$h"; done)
 check "all referenced hooks exist in repo" "" "$missing"
+
+# Cases 1 and 2 stub under synthetic names (issue #6), but --check resolves the
+# real names settings.json ships. Without these the sandbox has neither, and the
+# section silently falls through to whatever the host happens to have installed
+# — the same host-dependency issue #6 is about.
+make_stub "$SANDBOX/.headroom/bin" rtk
+make_stub "$SANDBOX/.local/bin" context-mode
 
 # --check must PASS in a sandbox where the CLIs are present.
 out=$(env HOME="$SANDBOX" "$REPO_DIR/install.sh" --check 2>&1); rc=$?

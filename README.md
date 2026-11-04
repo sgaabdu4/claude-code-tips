@@ -66,6 +66,7 @@ It also resolves the **CLI each hook actually runs** (`rtk`, `context-mode`) the
 
 ```bash
 ./tests/run-cli-hook.test.sh
+./tests/cbm-hooks.test.sh
 ```
 
 ## Layout

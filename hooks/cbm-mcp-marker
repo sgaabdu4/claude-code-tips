@@ -4,7 +4,11 @@
 set -euo pipefail
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
+# Same session key as cbm-code-discovery-gate: session_id, $PPID as fallback.
+SESSION=$(echo "$INPUT" | jq -r '.session_id // empty')
+SESSION=${SESSION//[^A-Za-z0-9_-]/}
+SESSION=${SESSION:-$PPID}
 if [[ "$TOOL" == mcp__codebase-memory-mcp__* ]]; then
-  touch /tmp/cbm-mcp-used-$PPID
+  touch "/tmp/cbm-mcp-used-$SESSION"
 fi
 exit 0

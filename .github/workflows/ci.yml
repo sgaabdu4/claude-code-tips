@@ -42,6 +42,8 @@ jobs:
 
       - name: test suite
         run: ./tests/run-cli-hook.test.sh
+      - name: cbm hook tests
+        run: ./tests/cbm-hooks.test.sh
 
       - name: cleanup-rtk-artifacts (report only)
         run: ./bin/cleanup-rtk-artifacts.sh

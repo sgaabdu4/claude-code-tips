@@ -1,9 +1,15 @@
 #!/bin/bash
 # Gate hook: nudges Claude toward codebase-memory-mcp for code discovery.
 # First Grep/Glob/Read/Search per session -> block. Subsequent -> allow.
-# PPID = Claude Code process PID, unique per session.
-GATE=/tmp/cbm-code-discovery-gate-$PPID
-MARKER=/tmp/cbm-mcp-used-$PPID
+# Keyed on session_id from the hook's stdin JSON. $PPID is not the Claude Code
+# process: each hook command runs in a fresh shell, so $PPID changes on every
+# call and the gate would block every Grep/Glob/Read instead of only the first.
+# $PPID stays as a fallback when jq is missing or stdin has no session_id.
+SESSION=$(jq -r '.session_id // empty' 2>/dev/null)
+SESSION=${SESSION//[^A-Za-z0-9_-]/}
+SESSION=${SESSION:-$PPID}
+GATE=/tmp/cbm-code-discovery-gate-$SESSION
+MARKER=/tmp/cbm-mcp-used-$SESSION
 # Stale-marker cleanup removed: /tmp is wiped on reboot (macOS) and PPID
 # collisions within a 24h window are rare. Cleanup via `find` was banned-pattern
 # adjacent and ran on every hook invocation for marginal gain.
